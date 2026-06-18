@@ -67,7 +67,9 @@ def _is_registered(img: "pycolmap.Image") -> bool:
 class ColmapDataset:
     """In-memory dataset over a `<scene>/sparse/0` reconstruction."""
 
-    def __init__(self, scene_dir: str | Path, downscale: int = 1, test_every: int = 8):
+    def __init__(
+        self, scene_dir: str | Path, downscale: int = 1, test_every: int = 8, init: str = "sfm"
+    ):
         scene_dir = Path(scene_dir)
         sparse = scene_dir / "sparse" / "0"
         if not sparse.exists():
@@ -118,6 +120,24 @@ class ColmapDataset:
         self.test_idx = idx[idx % test_every == 0]
         self.train_idx = idx[idx % test_every != 0]
         self.scene_scale = self._compute_scene_scale()
+
+        if init == "depth":
+            self._init_from_depth(rec, scene_dir)
+
+    def _init_from_depth(self, rec, scene_dir: Path) -> None:
+        """Replace sparse init points with a dense cloud back-projected from depth."""
+        from .depth_init import build_dense_cloud, estimate_colmap_scale
+
+        if not (Path(scene_dir) / "depth").exists():
+            print("[dataset] init=depth but no depth/ folder; keeping SfM points")
+            return
+        scale = estimate_colmap_scale(rec, Path(scene_dir) / "depth", z_min=0.2, z_max=3.0)
+        pts, cols = build_dense_cloud(scene_dir, rec, scale)
+        if len(pts) > 0:
+            self.points, self.points_rgb = pts, cols
+            print(f"[dataset] depth-init: {len(pts)} dense points (COLMAP scale={scale:.3f}/m)")
+        else:
+            print("[dataset] depth-init produced no points; keeping SfM points")
 
     def _compute_scene_scale(self) -> float:
         centers = []

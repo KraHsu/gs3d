@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     p_tr.add_argument("--sh-degree", type=int, default=3)
     p_tr.add_argument("--downscale", type=int, default=1)
     p_tr.add_argument("--eval-every", type=int, default=2000)
+    p_tr.add_argument("--init", choices=["sfm", "depth"], default="sfm",
+                      help="Gaussian init: sparse SfM points, or dense RealSense depth back-projection")
 
     p_rd = sub.add_parser("render", help="Render eval views + orbit video from a checkpoint")
     p_rd.add_argument("out", help="Output directory containing ckpt.pt")
@@ -72,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             sh_degree=args.sh_degree,
             downscale=args.downscale,
             eval_every=args.eval_every,
+            init=args.init,
         )
     elif args.cmd == "render":
         from .recon.render import render

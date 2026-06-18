@@ -61,6 +61,7 @@ def train(
     sh_increase_every: int = 1000,
     eval_every: int = 2000,
     seed: int = 0,
+    init: str = "sfm",
     device: str = "cuda",
 ) -> Path:
     if not torch.cuda.is_available():
@@ -69,8 +70,8 @@ def train(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[train] loading dataset from {scene_dir} (downscale={downscale}) ...")
-    dataset = ColmapDataset(scene_dir, downscale=downscale)
+    print(f"[train] loading dataset from {scene_dir} (downscale={downscale}, init={init}) ...")
+    dataset = ColmapDataset(scene_dir, downscale=downscale, init=init)
     print(
         f"[train] {len(dataset.train_idx)} train / {len(dataset.test_idx)} test views, "
         f"{dataset.points.shape[0]} init points, scene_scale={dataset.scene_scale:.3f}"
@@ -138,6 +139,7 @@ def train(
         "sh_degree": sh_degree,
         "downscale": downscale,
         "max_steps": max_steps,
+        "init": init,
         "final_metrics": metrics,
     }
     save_checkpoint(out_dir / "ckpt.pt", splats, config)
