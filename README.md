@@ -50,6 +50,11 @@ continuously (one every *N* previewed frames; default 3). Press **■ Stop** to 
 (Spacebar) takes single shots. Aim for ~100–300 frames with ~70% overlap. Tick **Capture IMU**
 (before Start camera) to also log the D435i accel+gyro. Output → `data/<dataset>/`:
 
+To reduce **motion blur** (the main cause of soft frames): uncheck **Auto exposure** and lower the
+**Exposure** slider (raise **Gain** / add light to compensate). Tick **Sharpness gate** to auto-skip
+frames blurrier than the threshold while recording — the live `sharp NN` readout helps you pick one.
+
+
 ```
 images/000001.jpg ...   # color frames → COLMAP SfM input
 depth/000001.png  ...   # 16-bit depth (mm), aligned to color

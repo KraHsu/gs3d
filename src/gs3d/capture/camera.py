@@ -110,6 +110,8 @@ class RealSenseCamera:
         self._imu_lock = threading.Lock()
         self.imu_enabled = False
 
+        self._color_sensor = None  # for exposure/gain control
+
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         if self._pipeline is not None:
@@ -157,6 +159,16 @@ class RealSenseCamera:
 
         depth_sensor = profile.get_device().first_depth_sensor()
         self._depth_scale = float(depth_sensor.get_depth_scale())
+
+        # Grab the RGB sensor handle for exposure/gain control.
+        self._color_sensor = None
+        for s in profile.get_device().query_sensors():
+            try:
+                if s.get_info(rs.camera_info.name) == "RGB Camera":
+                    self._color_sensor = s
+                    break
+            except Exception:
+                continue
 
         # Align depth into the color frame so they share intrinsics + resolution.
         self._align = rs.align(rs.stream.color)
@@ -211,6 +223,40 @@ class RealSenseCamera:
             self._imu_buf.clear()
         return out
 
+    # -- RGB exposure / gain controls -------------------------------------
+    def _supports(self, option) -> bool:
+        return self._color_sensor is not None and self._color_sensor.supports(option)
+
+    def _range(self, option) -> tuple[float, float, float]:
+        r = self._color_sensor.get_option_range(option)
+        return float(r.min), float(r.max), float(r.default)
+
+    def supports_exposure(self) -> bool:
+        return self._supports(rs.option.exposure)
+
+    def supports_gain(self) -> bool:
+        return self._supports(rs.option.gain)
+
+    def exposure_range(self) -> tuple[float, float, float]:
+        return self._range(rs.option.exposure)
+
+    def gain_range(self) -> tuple[float, float, float]:
+        return self._range(rs.option.gain)
+
+    def set_auto_exposure(self, enabled: bool) -> None:
+        if self._supports(rs.option.enable_auto_exposure):
+            self._color_sensor.set_option(rs.option.enable_auto_exposure, 1.0 if enabled else 0.0)
+
+    def set_exposure(self, microseconds: float) -> None:
+        """Set manual exposure (disables auto-exposure first). Shorter = less motion blur."""
+        if self._supports(rs.option.exposure):
+            self.set_auto_exposure(False)
+            self._color_sensor.set_option(rs.option.exposure, float(microseconds))
+
+    def set_gain(self, value: float) -> None:
+        if self._supports(rs.option.gain):
+            self._color_sensor.set_option(rs.option.gain, float(value))
+
     def stop(self) -> None:
         if self._imu_pipeline is not None:
             try:
@@ -224,6 +270,7 @@ class RealSenseCamera:
             finally:
                 self._pipeline = None
                 self._align = None
+                self._color_sensor = None
 
     def __enter__(self) -> "RealSenseCamera":
         self.start()

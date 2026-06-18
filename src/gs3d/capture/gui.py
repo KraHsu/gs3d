@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -90,6 +91,12 @@ def _depth_to_qimage(depth_mm: np.ndarray) -> QImage:
     return _bgr_to_qimage(colored)
 
 
+def _sharpness(bgr: np.ndarray) -> float:
+    """Variance of the Laplacian — higher is sharper (same metric as curate_dataset)."""
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
 class CaptureWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -103,6 +110,7 @@ class CaptureWindow(QWidget):
         self._rec_t0 = 0.0
         self._frames_since_cap = 0
         self._missed = 0
+        self._dropped = 0
 
         self._build_ui()
 
@@ -142,7 +150,7 @@ class CaptureWindow(QWidget):
             "background:#141517; color:#777; border:1px solid #3a3d42; border-radius:8px;"
         )
 
-        # Camera controls --------------------------------------------------
+        # Camera group -----------------------------------------------------
         self.cam_btn = QPushButton("Start camera")
         self.cam_btn.clicked.connect(self._toggle_camera)
         self.depth_chk = QCheckBox("Show depth")
@@ -155,6 +163,32 @@ class CaptureWindow(QWidget):
         cam_row.addWidget(self.depth_chk)
         cam_row.addWidget(self.imu_chk)
         cam_row.addWidget(self.profile_label, 1)
+
+        # Exposure / gain (shorter exposure => less motion blur, but darker).
+        self.ae_chk = QCheckBox("Auto exposure")
+        self.ae_chk.setChecked(True)
+        self.ae_chk.toggled.connect(self._on_ae_toggled)
+        self.exp_slider = QSlider(Qt.Orientation.Horizontal)
+        self.exp_slider.valueChanged.connect(self._on_exposure)
+        self.exp_label = QLabel("exp —")
+        self.exp_label.setStyleSheet("color:#9aa0a8;")
+        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.gain_slider.valueChanged.connect(self._on_gain)
+        self.gain_label = QLabel("gain —")
+        self.gain_label.setStyleSheet("color:#9aa0a8;")
+        exp_row = QHBoxLayout()
+        exp_row.addWidget(self.ae_chk)
+        exp_row.addWidget(QLabel("Exposure"))
+        exp_row.addWidget(self.exp_slider, 2)
+        exp_row.addWidget(self.exp_label)
+        exp_row.addWidget(QLabel("Gain"))
+        exp_row.addWidget(self.gain_slider, 1)
+        exp_row.addWidget(self.gain_label)
+
+        cam_box = QGroupBox("Camera")
+        cam_lay = QVBoxLayout(cam_box)
+        cam_lay.addLayout(cam_row)
+        cam_lay.addLayout(exp_row)
 
         # Recording group --------------------------------------------------
         self.rec_btn = QPushButton("●  Record")
@@ -186,9 +220,29 @@ class CaptureWindow(QWidget):
         rec_row.addStretch(1)
         rec_row.addWidget(self.rec_indicator)
         rec_row.addWidget(self.stats_label)
+        # Sharpness gate: skip blurry frames while recording.
+        self.gate_chk = QCheckBox("Sharpness gate")
+        self.gate_chk.setToolTip("While recording, skip frames blurrier than the threshold.")
+        self.gate_spin = QSpinBox()
+        self.gate_spin.setRange(0, 1000)
+        self.gate_spin.setValue(50)
+        self.sharp_label = QLabel("sharp —")
+        self.sharp_label.setStyleSheet("color:#9aa0a8;")
+        self.dropped_label = QLabel("dropped: 0")
+        self.dropped_label.setStyleSheet("color:#9aa0a8;")
+        gate_row = QHBoxLayout()
+        gate_row.addWidget(self.gate_chk)
+        gate_row.addWidget(QLabel("min sharpness"))
+        gate_row.addWidget(self.gate_spin)
+        gate_row.addStretch(1)
+        gate_row.addWidget(self.sharp_label)
+        gate_row.addSpacing(12)
+        gate_row.addWidget(self.dropped_label)
+
         rec_box = QGroupBox("Recording")
         rec_lay = QVBoxLayout(rec_box)
         rec_lay.addLayout(rec_row)
+        rec_lay.addLayout(gate_row)
 
         self.status = QLabel("Idle.")
         tips = QLabel(TIPS)
@@ -198,7 +252,7 @@ class CaptureWindow(QWidget):
         root = QVBoxLayout(self)
         root.addWidget(ds_box)
         root.addWidget(self.preview, 1)
-        root.addLayout(cam_row)
+        root.addWidget(cam_box)
         root.addWidget(rec_box)
         root.addWidget(self.status)
         root.addWidget(tips)
@@ -272,11 +326,56 @@ class CaptureWindow(QWidget):
             imu_note = "  +IMU" if self.camera.imu_enabled else "  (IMU unavailable)"
         self.profile_label.setText(self.camera.active_profile + imu_note)
         self.imu_chk.setEnabled(False)
+        self._init_exposure_controls()
         self._set_capture_enabled(True)
         self._missed = 0
         self.status.setText("Camera streaming. Press ● Record to capture a dataset.")
         self.timer.start(30)
         return True
+
+    # -- exposure / gain ---------------------------------------------------
+    def _init_exposure_controls(self) -> None:
+        cam = self.camera
+        has_exp = cam.supports_exposure()
+        self.ae_chk.setEnabled(has_exp)
+        if has_exp:
+            lo, hi, dflt = cam.exposure_range()
+            self.exp_slider.blockSignals(True)
+            self.exp_slider.setRange(int(lo), int(hi))
+            self.exp_slider.setValue(int(dflt))
+            self.exp_slider.blockSignals(False)
+            self.exp_label.setText(f"exp {int(dflt)}")
+        if cam.supports_gain():
+            glo, ghi, gd = cam.gain_range()
+            self.gain_slider.blockSignals(True)
+            self.gain_slider.setRange(int(glo), int(ghi))
+            self.gain_slider.setValue(int(gd))
+            self.gain_slider.blockSignals(False)
+            self.gain_label.setText(f"gain {int(gd)}")
+        # Default to auto-exposure on; sliders take over when it is unchecked.
+        self.ae_chk.setChecked(True)
+        cam.set_auto_exposure(True)
+        self.exp_slider.setEnabled(False)
+        self.gain_slider.setEnabled(False)
+
+    def _on_ae_toggled(self, on: bool) -> None:
+        if self.camera is not None:
+            self.camera.set_auto_exposure(on)
+            if not on:  # push current slider values as the manual setpoint
+                self.camera.set_exposure(self.exp_slider.value())
+                self.camera.set_gain(self.gain_slider.value())
+        self.exp_slider.setEnabled(not on)
+        self.gain_slider.setEnabled(not on)
+
+    def _on_exposure(self, val: int) -> None:
+        self.exp_label.setText(f"exp {val}")
+        if self.camera is not None and not self.ae_chk.isChecked():
+            self.camera.set_exposure(val)
+
+    def _on_gain(self, val: int) -> None:
+        self.gain_label.setText(f"gain {val}")
+        if self.camera is not None and not self.ae_chk.isChecked():
+            self.camera.set_gain(val)
 
     def _stop_camera(self) -> None:
         if self._recording:
@@ -325,6 +424,8 @@ class CaptureWindow(QWidget):
         self._recording = True
         self._rec_t0 = time.monotonic()
         self._frames_since_cap = 0
+        self._dropped = 0
+        self.dropped_label.setText("dropped: 0")
         self._style_record(True)
         # Lock dataset identity while recording.
         self.name_edit.setEnabled(False)
@@ -358,6 +459,9 @@ class CaptureWindow(QWidget):
         self._missed = 0
         self._last_frame = frame
 
+        sharp = _sharpness(frame.color_bgr)
+        self.sharp_label.setText(f"sharp {sharp:.0f}")
+
         # Drain IMU each tick (bounds the buffer); persist only while recording.
         if self.camera.imu_enabled:
             samples = self.camera.drain_imu()
@@ -377,7 +481,11 @@ class CaptureWindow(QWidget):
             self._frames_since_cap += 1
             if self._frames_since_cap >= self.every_spin.value():
                 self._frames_since_cap = 0
-                self.writer.save(frame)
+                if self.gate_chk.isChecked() and sharp < self.gate_spin.value():
+                    self._dropped += 1
+                    self.dropped_label.setText(f"dropped: {self._dropped}")
+                else:
+                    self.writer.save(frame)
             elapsed = time.monotonic() - self._rec_t0
             # Blink the REC dot ~1 Hz.
             self.rec_indicator.setText("● REC" if int(elapsed * 2) % 2 == 0 else "   REC")
