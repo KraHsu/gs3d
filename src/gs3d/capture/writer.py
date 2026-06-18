@@ -29,6 +29,8 @@ class DatasetWriter:
         self.intrinsics = intrinsics
         self._count = self._highest_existing_index()
         self._log: list[dict] = []
+        self._imu_count = 0
+        self._imu_path = self.scene_dir / "imu.jsonl"
 
         # Persist intrinsics immediately so the scene is self-describing.
         (self.scene_dir / "intrinsics.json").write_text(
@@ -62,11 +64,25 @@ class DatasetWriter:
         )
         return stem
 
+    def append_imu(self, samples: list[dict]) -> None:
+        """Append IMU samples (one JSON object per line) to imu.jsonl."""
+        if not samples:
+            return
+        with open(self._imu_path, "a") as f:
+            for s in samples:
+                f.write(json.dumps(s) + "\n")
+        self._imu_count += len(samples)
+
     def flush_meta(self) -> None:
         meta = {
             "scene": self.scene_dir.name,
             "num_frames": self._count,
             "depth_units": "uint16 millimetres (aligned to color)",
+            "imu": {
+                "recorded": self._imu_path.exists(),
+                "samples_this_session": self._imu_count,
+                "units": "accel m/s^2, gyro rad/s, t = device ms; streams not hw-synced to frames",
+            },
             "intrinsics": self.intrinsics.to_dict(),
             "frames": self._log,
             "written_at": datetime.now(timezone.utc).isoformat(),

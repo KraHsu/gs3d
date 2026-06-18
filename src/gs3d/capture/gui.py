@@ -109,11 +109,14 @@ class CaptureWindow(QWidget):
         self.cam_btn = QPushButton("Start camera")
         self.cam_btn.clicked.connect(self._toggle_camera)
         self.depth_chk = QCheckBox("Show depth")
+        self.imu_chk = QCheckBox("Capture IMU")
+        self.imu_chk.setToolTip("Record D435i accel+gyro to imu.jsonl (set before Start camera).")
         self.profile_label = QLabel("")
         self.profile_label.setStyleSheet("color:#888;")
         cam_row = QHBoxLayout()
         cam_row.addWidget(self.cam_btn)
         cam_row.addWidget(self.depth_chk)
+        cam_row.addWidget(self.imu_chk)
         cam_row.addWidget(self.profile_label, 1)
 
         # Recording group --------------------------------------------------
@@ -198,15 +201,20 @@ class CaptureWindow(QWidget):
             self._stop_camera()
 
     def _start_camera(self) -> bool:
+        want_imu = self.imu_chk.isChecked()
         try:
-            self.camera = RealSenseCamera()
+            self.camera = RealSenseCamera(enable_imu=want_imu)
             self.camera.start()
         except CameraError as exc:
             self.camera = None
             QMessageBox.critical(self, "Camera error", str(exc))
             return False
         self.cam_btn.setText("Stop camera")
-        self.profile_label.setText(self.camera.active_profile)
+        imu_note = ""
+        if want_imu:
+            imu_note = "  +IMU" if self.camera.imu_enabled else "  (IMU unavailable)"
+        self.profile_label.setText(self.camera.active_profile + imu_note)
+        self.imu_chk.setEnabled(False)
         self._set_capture_enabled(True)
         self._missed = 0
         self.status.setText("Camera streaming. Press ● Record to capture a dataset.")
@@ -222,6 +230,7 @@ class CaptureWindow(QWidget):
             self.camera = None
         self.cam_btn.setText("Start camera")
         self.profile_label.setText("")
+        self.imu_chk.setEnabled(True)
         self.preview.setText("Preview — press Start camera")
         self._set_capture_enabled(False)
         self.status.setText("Camera stopped.")
@@ -293,6 +302,12 @@ class CaptureWindow(QWidget):
             return
         self._missed = 0
         self._last_frame = frame
+
+        # Drain IMU each tick (bounds the buffer); persist only while recording.
+        if self.camera.imu_enabled:
+            samples = self.camera.drain_imu()
+            if self._recording and self.writer is not None:
+                self.writer.append_imu(samples)
 
         qimg = _depth_to_qimage(frame.depth_mm) if self.depth_chk.isChecked() else _bgr_to_qimage(frame.color_bgr)
         self.preview.setPixmap(

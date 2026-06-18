@@ -6,6 +6,8 @@ camera intrinsics (needed downstream for reference / depth back-projection).
 
 from __future__ import annotations
 
+import threading
+from collections import deque
 from dataclasses import dataclass, asdict
 
 import numpy as np
@@ -87,9 +89,12 @@ class RealSenseCamera:
     ...     intr = cam.color_intrinsics
     """
 
-    def __init__(self, profiles: list[Profile] | None = None) -> None:
+    def __init__(
+        self, profiles: list[Profile] | None = None, enable_imu: bool = False
+    ) -> None:
         # If None, profiles are chosen at start() based on detected USB type.
         self._user_profiles = profiles
+        self._enable_imu = enable_imu
 
         self._pipeline: "rs.pipeline | None" = None
         self._align: "rs.align | None" = None
@@ -97,6 +102,13 @@ class RealSenseCamera:
         self.color_intrinsics: Intrinsics | None = None
         self.active_profile: str = ""
         self.usb_type: str = ""
+
+        # IMU runs on its own pipeline + callback (accel/gyro are much faster than
+        # video and arrive asynchronously). Samples buffer until drain_imu().
+        self._imu_pipeline: "rs.pipeline | None" = None
+        self._imu_buf: deque = deque(maxlen=200_000)
+        self._imu_lock = threading.Lock()
+        self.imu_enabled = False
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -163,7 +175,49 @@ class RealSenseCamera:
         )
         self._pipeline = pipeline
 
+        if self._enable_imu:
+            self._start_imu()
+
+    def _start_imu(self) -> None:
+        """Start a separate accel+gyro pipeline feeding a callback. Best-effort."""
+        try:
+            imu_pipe = rs.pipeline()
+            imu_cfg = rs.config()
+            imu_cfg.enable_stream(rs.stream.accel)
+            imu_cfg.enable_stream(rs.stream.gyro)
+            imu_pipe.start(imu_cfg, self._imu_callback)
+        except RuntimeError:
+            self._imu_pipeline = None
+            self.imu_enabled = False
+            return
+        self._imu_pipeline = imu_pipe
+        self.imu_enabled = True
+
+    def _imu_callback(self, frame) -> None:
+        mf = frame.as_motion_frame()
+        if not mf:
+            return
+        d = mf.get_motion_data()
+        kind = "gyro" if mf.get_profile().stream_type() == rs.stream.gyro else "accel"
+        with self._imu_lock:
+            self._imu_buf.append(
+                {"stream": kind, "t": mf.get_timestamp(), "x": d.x, "y": d.y, "z": d.z}
+            )
+
+    def drain_imu(self) -> list[dict]:
+        """Return and clear all IMU samples accumulated since the last drain."""
+        with self._imu_lock:
+            out = list(self._imu_buf)
+            self._imu_buf.clear()
+        return out
+
     def stop(self) -> None:
+        if self._imu_pipeline is not None:
+            try:
+                self._imu_pipeline.stop()
+            finally:
+                self._imu_pipeline = None
+                self.imu_enabled = False
         if self._pipeline is not None:
             try:
                 self._pipeline.stop()
