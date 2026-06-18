@@ -155,12 +155,19 @@ class CaptureWindow(QWidget):
         self.depth_chk = QCheckBox("Show depth")
         self.imu_chk = QCheckBox("Capture IMU")
         self.imu_chk.setToolTip("Record D435i accel+gyro to imu.jsonl (set before Start camera).")
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(1, 60)
+        self.fps_spin.setValue(30)
+        self.fps_spin.setToolTip("Preview/capture polling rate (capped by the camera's stream fps).")
+        self.fps_spin.valueChanged.connect(self._on_fps)
         self.profile_label = QLabel("")
         self.profile_label.setStyleSheet("color:#9aa0a8;")
         cam_row = QHBoxLayout()
         cam_row.addWidget(self.cam_btn)
         cam_row.addWidget(self.depth_chk)
         cam_row.addWidget(self.imu_chk)
+        cam_row.addWidget(QLabel("FPS"))
+        cam_row.addWidget(self.fps_spin)
         cam_row.addWidget(self.profile_label, 1)
 
         # Exposure / gain (shorter exposure => less motion blur, but darker).
@@ -329,8 +336,15 @@ class CaptureWindow(QWidget):
         self._set_capture_enabled(True)
         self._missed = 0
         self.status.setText("Camera streaming. Press ● Record to capture a dataset.")
-        self.timer.start(30)
+        self.timer.start(self._timer_interval_ms())
         return True
+
+    def _timer_interval_ms(self) -> int:
+        return max(1, round(1000 / self.fps_spin.value()))
+
+    def _on_fps(self, _val: int) -> None:
+        if self.timer.isActive():
+            self.timer.setInterval(self._timer_interval_ms())
 
     # -- exposure / gain ---------------------------------------------------
     def _init_exposure_controls(self) -> None:
