@@ -69,18 +69,32 @@ imu.jsonl               # optional: {stream:accel|gyro, t, x, y, z} per line
 > unplug and replug** it, preferably into a **USB 3 port** with a good cable, then retry
 > `gs3d check-camera`. Verify the link with `check-camera`'s `USB3.x`/`USB2.1` prefix.
 
+### Optional — curate the capture first (recommended for long/blurry recordings)
+
+Drop blurry frames and cap the count for faster, more robust SfM (sequence is split into
+`--max-frames` windows; the sharpest frame per window is kept):
+
+```powershell
+uv run python scripts/curate_dataset.py data/<scene> -o data/<scene>_sharp --max-frames 280
+```
+
+Then sync/reconstruct the `_sharp` scene.
+
 ## Subpart 2 — Reconstruct (Ubuntu / H20)
 
 After syncing code + data to the server (see **Sync** below):
 
 ```bash
 bash scripts/setup_server.sh                      # uv, CUDA_HOME, uv sync --extra recon, build gsplat
-uv run gs3d sfm    data/<scene>                   # pycolmap → sparse/0
+uv run gs3d sfm    data/<scene> --matching sequential --device cpu   # pycolmap → sparse/0
 uv run gs3d train  data/<scene> -o outputs/<scene>
 uv run gs3d render outputs/<scene>                # eval PSNR/SSIM + orbit.mp4 + point_cloud.ply
 # or all three:
 bash scripts/run_pipeline.sh data/<scene>
 ```
+
+> On a headless server use `--matching sequential --device cpu` for SfM (GPU SIFT needs a
+> display). A real 280-frame capture reconstructs in ~1–2 min SfM + ~90 s training on an H20.
 
 Verify the pipeline **without the camera** first:
 

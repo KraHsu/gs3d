@@ -12,7 +12,7 @@ OUT="outputs/$NAME"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 export PATH="$CUDA_HOME/bin:$PATH"
 
-uv run gs3d sfm "$SCENE"
+uv run gs3d sfm "$SCENE" --matching sequential --device cpu
 uv run gs3d train "$SCENE" -o "$OUT" --max-steps "$STEPS"
 uv run gs3d render "$OUT"
 echo "[pipeline] outputs in $OUT (point_cloud.ply, orbit.mp4, eval/)"

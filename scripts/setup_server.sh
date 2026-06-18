@@ -48,7 +48,18 @@ assert torch.cuda.is_available(), "CUDA not visible to torch"
 print("device:", torch.cuda.get_device_name(0))
 import gsplat
 from gsplat import rasterization, DefaultStrategy  # noqa: F401
-print("gsplat", gsplat.__version__, "ready")
+# Actually invoke a kernel so gsplat's CUDA extension compiles now (not on the
+# first train). `uv run` puts ninja (and nvcc via CUDA_HOME/PATH) on PATH.
+N = 100
+means = torch.randn(N, 3, device="cuda")
+quats = torch.zeros(N, 4, device="cuda"); quats[:, 0] = 1
+scales = torch.full((N, 3), 0.1, device="cuda")
+opac = torch.ones(N, device="cuda")
+colors = torch.rand(N, 3, device="cuda")
+viewmats = torch.eye(4, device="cuda")[None]
+Ks = torch.tensor([[[300., 0, 128], [0, 300, 128], [0, 0, 1]]], device="cuda")
+img, _, _ = rasterization(means, quats, scales, opac, colors, viewmats, Ks, 256, 256)
+print("gsplat", gsplat.__version__, "kernel compiled + ran:", tuple(img.shape))
 PY
 
 echo "[setup] done. Try:  bash scripts/get_sample.sh && uv run gs3d train ./samples/tandt/truck -o outputs/sample --max-steps 1000"
