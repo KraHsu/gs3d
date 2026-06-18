@@ -38,6 +38,23 @@ TIPS = (
     "keeping ~70% overlap. Prefer a textured, well-lit, static scene. ~100–300 frames is plenty."
 )
 
+APP_QSS = """
+QWidget { font-size: 13px; color: #222; }
+QGroupBox {
+    font-weight: 600; border: 1px solid #d6d6d6; border-radius: 8px;
+    margin-top: 10px; padding: 10px 10px 8px 10px;
+}
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #555; }
+QPushButton {
+    padding: 6px 14px; border: 1px solid #c4c4c4; border-radius: 6px; background: #fafafa;
+}
+QPushButton:hover { background: #f0f0f0; }
+QPushButton:pressed { background: #e8e8e8; }
+QPushButton:disabled { color: #aaa; background: #f2f2f2; border-color: #e0e0e0; }
+QLineEdit, QSpinBox { padding: 4px 6px; border: 1px solid #c4c4c4; border-radius: 6px; background: white; }
+QCheckBox { spacing: 6px; }
+"""
+
 
 def _bgr_to_qimage(bgr: np.ndarray) -> QImage:
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -79,6 +96,7 @@ class CaptureWindow(QWidget):
 
     # -- UI ----------------------------------------------------------------
     def _build_ui(self) -> None:
+        self.setStyleSheet(APP_QSS)
         # Dataset group ----------------------------------------------------
         self.out_edit = QLineEdit(str(self._default_output_dir()))
         browse = QPushButton("Browse…")
@@ -121,8 +139,8 @@ class CaptureWindow(QWidget):
 
         # Recording group --------------------------------------------------
         self.rec_btn = QPushButton("●  Record")
-        self.rec_btn.setMinimumHeight(44)
-        self.rec_btn.setStyleSheet("font-size:16px; font-weight:bold;")
+        self.rec_btn.setObjectName("recordBtn")
+        self.rec_btn.setMinimumWidth(120)
         self.rec_btn.clicked.connect(self._toggle_record)
 
         self.snap_btn = QPushButton("Snap (Space)")
@@ -139,8 +157,10 @@ class CaptureWindow(QWidget):
         self.stats_label.setStyleSheet("font-weight:bold;")
 
         rec_row = QHBoxLayout()
-        rec_row.addWidget(self.rec_btn, 2)
-        rec_row.addWidget(self.snap_btn, 1)
+        rec_row.setSpacing(8)
+        rec_row.addWidget(self.rec_btn)
+        rec_row.addWidget(self.snap_btn)
+        rec_row.addSpacing(12)
         rec_row.addWidget(QLabel("capture every"))
         rec_row.addWidget(self.every_spin)
         rec_row.addWidget(QLabel("frames"))
@@ -164,8 +184,26 @@ class CaptureWindow(QWidget):
         root.addWidget(self.status)
         root.addWidget(tips)
 
+        self._style_record(False)
         self._set_capture_enabled(False)
         self._refresh_target()
+
+    def _style_record(self, recording: bool) -> None:
+        if recording:
+            self.rec_btn.setText("■  Stop")
+            self.rec_btn.setStyleSheet(
+                "#recordBtn{background:#e5484d;color:white;border:1px solid #e5484d;"
+                "border-radius:6px;padding:6px 14px;font-weight:700;}"
+                "#recordBtn:hover{background:#d83a3f;}"
+            )
+        else:
+            self.rec_btn.setText("●  Record")
+            self.rec_btn.setStyleSheet(
+                "#recordBtn{color:#1a7f37;border:1px solid #2ea043;background:#f3fbf4;"
+                "border-radius:6px;padding:6px 14px;font-weight:700;}"
+                "#recordBtn:hover{background:#e8f6ea;}"
+                "#recordBtn:disabled{color:#aaa;border-color:#e0e0e0;background:#f2f2f2;}"
+            )
 
     @staticmethod
     def _default_output_dir() -> Path:
@@ -268,8 +306,7 @@ class CaptureWindow(QWidget):
         self._recording = True
         self._rec_t0 = time.monotonic()
         self._frames_since_cap = 0
-        self.rec_btn.setText("■  Stop")
-        self.rec_btn.setStyleSheet("font-size:16px; font-weight:bold; background:#e33; color:white;")
+        self._style_record(True)
         # Lock dataset identity while recording.
         self.name_edit.setEnabled(False)
         self.out_edit.setEnabled(False)
@@ -279,8 +316,7 @@ class CaptureWindow(QWidget):
         self._recording = False
         if self.writer is not None:
             self.writer.flush_meta()
-        self.rec_btn.setText("●  Record")
-        self.rec_btn.setStyleSheet("font-size:16px; font-weight:bold;")
+        self._style_record(False)
         self.rec_indicator.setText("")
         self.name_edit.setEnabled(True)
         self.out_edit.setEnabled(True)
