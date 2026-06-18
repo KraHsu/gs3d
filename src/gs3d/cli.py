@@ -44,6 +44,10 @@ def main(argv: list[str] | None = None) -> int:
     p_rd.add_argument("--n-frames", type=int, default=120)
     p_rd.add_argument("--fps", type=int, default=30)
 
+    p_vw = sub.add_parser("view", help="Interactive GPU viewer (viser) for a trained model")
+    p_vw.add_argument("out", help="Output directory containing ckpt.pt")
+    p_vw.add_argument("--port", type=int, default=8080)
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -73,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
         from .recon.render import render
 
         render(args.out, n_frames=args.n_frames, fps=args.fps)
+    elif args.cmd == "view":
+        from .recon.viewer import view
+
+        view(args.out, port=args.port)
     return 0
 
 
