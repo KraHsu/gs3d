@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .camera import CameraError, RealSenseCamera
+from .camera import CameraError, FrameTimeout, RealSenseCamera
 from .writer import DatasetWriter
 
 TIPS = (
@@ -61,6 +61,7 @@ class CaptureWindow(QWidget):
         self.writer: DatasetWriter | None = None
         self._frames_since_auto = 0
         self._last_frame = None
+        self._missed = 0
 
         self._build_ui()
 
@@ -194,10 +195,15 @@ class CaptureWindow(QWidget):
         if self.camera is None:
             return
         try:
-            frame = self.camera.wait_for_frame(timeout_ms=1000)
+            frame = self.camera.wait_for_frame(timeout_ms=2000)
+        except FrameTimeout:
+            self._missed += 1
+            self.status.setText(f"Waiting for frames… (missed {self._missed})")
+            return
         except CameraError as exc:
             self.status.setText(f"Frame error: {exc}")
             return
+        self._missed = 0
         self._last_frame = frame
 
         if self.depth_chk.isChecked():

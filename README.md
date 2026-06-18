@@ -50,7 +50,12 @@ with ~70% overlap. Output → `data/<scene>/` with `images/`, `depth/`, `intrins
 `meta.json`.
 
 > Needs the D435i + Intel RealSense USB drivers. Stream resolution auto-falls-back to the USB
-> link's capability (USB 3 → 1280×720@30; USB 2.1 → lower). Use a USB 3 port/cable for best quality.
+> link's capability (USB 3 → 1280×720@30; USB 2.1 → 640×480@15). Use a USB 3 port/cable for best quality.
+>
+> **Troubleshooting "Frame didn't arrive":** the camera streams nothing in every mode → the
+> D435i is wedged (often after an unclean exit) or on a marginal USB 2.1 link. **Physically
+> unplug and replug** it, preferably into a **USB 3 port** with a good cable, then retry
+> `gs3d check-camera`. Verify the link with `check-camera`'s `USB3.x`/`USB2.1` prefix.
 
 ## Subpart 2 — Reconstruct (Ubuntu / H20)
 

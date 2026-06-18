@@ -45,20 +45,36 @@ class Frame:
     depth_scale: float  # metres per depth unit (depth_mm * scale = metres)
 
 
-# (color (w,h), depth (w,h), fps) candidates tried in order. The first that the
-# device/USB link can resolve is used. USB3 unlocks the high-res entries; USB2.1
-# typically falls back to 640x480@30.
-DEFAULT_PROFILES: list[tuple[tuple[int, int], tuple[int, int], int]] = [
+# (color (w,h), depth (w,h), fps) candidates tried in order; the first the link
+# can *sustain* is used. Selection is gated by USB type because a profile that
+# pipeline.start() accepts on USB2.1 can still exceed the link's real bandwidth
+# and silently drop framesets (wait_for_frames then times out forever).
+Profile = tuple[tuple[int, int], tuple[int, int], int]
+
+# USB3: plenty of bandwidth — prefer high-res color.
+USB3_PROFILES: list[Profile] = [
     ((1280, 720), (848, 480), 30),
-    ((1280, 720), (640, 480), 15),
+    ((1280, 720), (848, 480), 15),
     ((640, 480), (640, 480), 30),
+]
+# USB2.1: dual color+depth at 30fps tends to be accepted by start() but then
+# delivers no framesets on this link, so lead with 15fps (and 6fps) modes that
+# actually stream. Plug into USB3 for high-res/30fps.
+USB2_PROFILES: list[Profile] = [
     ((640, 480), (640, 480), 15),
-    ((424, 240), (480, 270), 30),
+    ((640, 480), (480, 270), 15),
+    ((424, 240), (480, 270), 15),
+    ((1280, 720), (640, 480), 6),
+    ((640, 480), (640, 480), 6),
 ]
 
 
 class CameraError(RuntimeError):
     pass
+
+
+class FrameTimeout(CameraError):
+    """No coherent frameset arrived within the timeout (often USB bandwidth)."""
 
 
 class RealSenseCamera:
@@ -71,17 +87,16 @@ class RealSenseCamera:
     ...     intr = cam.color_intrinsics
     """
 
-    def __init__(
-        self,
-        profiles: list[tuple[tuple[int, int], tuple[int, int], int]] | None = None,
-    ) -> None:
-        self.profiles = profiles or DEFAULT_PROFILES
+    def __init__(self, profiles: list[Profile] | None = None) -> None:
+        # If None, profiles are chosen at start() based on detected USB type.
+        self._user_profiles = profiles
 
         self._pipeline: "rs.pipeline | None" = None
         self._align: "rs.align | None" = None
         self._depth_scale: float = 0.001  # D435i default: 1 unit = 1 mm
         self.color_intrinsics: Intrinsics | None = None
         self.active_profile: str = ""
+        self.usb_type: str = ""
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -89,21 +104,35 @@ class RealSenseCamera:
             return
 
         ctx = rs.context()
-        if len(ctx.query_devices()) == 0:
+        devices = ctx.query_devices()
+        if len(devices) == 0:
             raise CameraError(
                 "No RealSense device detected. Check the USB connection and drivers."
             )
 
+        # Pick a profile list based on the USB link (unless explicitly overridden).
+        if self._user_profiles is not None:
+            profiles = self._user_profiles
+            self.usb_type = "user"
+        else:
+            try:
+                self.usb_type = devices[0].get_info(rs.camera_info.usb_type_descriptor)
+            except Exception:
+                self.usb_type = "unknown"
+            profiles = USB2_PROFILES if self.usb_type.startswith("2") else USB3_PROFILES
+
         pipeline = rs.pipeline()
         profile = None
         errors = []
-        for (cw, ch), (dw, dh), fps in self.profiles:
+        for (cw, ch), (dw, dh), fps in profiles:
             config = rs.config()
             config.enable_stream(rs.stream.color, cw, ch, rs.format.bgr8, fps)
             config.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, fps)
             try:
                 profile = pipeline.start(config)
-                self.active_profile = f"color {cw}x{ch} + depth {dw}x{dh} @ {fps}fps"
+                self.active_profile = (
+                    f"USB{self.usb_type} | color {cw}x{ch} + depth {dw}x{dh} @ {fps}fps"
+                )
                 break
             except RuntimeError as exc:  # this combo isn't resolvable on the link
                 errors.append(f"  {cw}x{ch}/{dw}x{dh}@{fps}: {exc}")
@@ -154,7 +183,10 @@ class RealSenseCamera:
         if self._pipeline is None or self._align is None:
             raise CameraError("Camera is not started.")
 
-        frames = self._pipeline.wait_for_frames(timeout_ms)
+        try:
+            frames = self._pipeline.wait_for_frames(timeout_ms)
+        except RuntimeError as exc:  # pyrealsense raises bare RuntimeError on timeout
+            raise FrameTimeout(str(exc)) from exc
         frames = self._align.process(frames)
         color = frames.get_color_frame()
         depth = frames.get_depth_frame()
