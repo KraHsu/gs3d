@@ -1,4 +1,15 @@
-"""Command-line interface: `gs3d sfm | train | render`."""
+"""Unified CLI for both subparts.
+
+  gs3d capture                 # launch the RealSense capture GUI (Windows)
+  gs3d check-camera            # detect the D435i and grab one test frame
+  gs3d sfm    <scene>          # COLMAP SfM via pycolmap            (Ubuntu)
+  gs3d train  <scene> -o <out> # train a 3DGS model with gsplat     (Ubuntu)
+  gs3d render <out>            # eval views + orbit video           (Ubuntu)
+
+Subcommand dependencies are imported lazily, so the capture commands work on a
+``--extra capture`` install (no torch) and the recon commands work on a
+``--extra recon`` install (no PySide6).
+"""
 
 from __future__ import annotations
 
@@ -6,9 +17,14 @@ import argparse
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="gs3d", description="RealSense → 3D Gaussian Splatting")
+    parser = argparse.ArgumentParser(prog="gs3d", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    # -- capture subpart --
+    sub.add_parser("capture", help="Launch the RealSense capture GUI (Windows)")
+    sub.add_parser("check-camera", help="Detect the D435i and grab one test frame")
+
+    # -- recon subpart --
     p_sfm = sub.add_parser("sfm", help="Run COLMAP SfM (pycolmap) on a captured scene")
     p_sfm.add_argument("scene", help="Path to data/<scene> (must contain images/)")
     p_sfm.add_argument("--matching", choices=["exhaustive", "sequential"], default="exhaustive")
@@ -30,12 +46,20 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.cmd == "capture":
+        from .capture.app import main as gui_main
+
+        return gui_main()
+    if args.cmd == "check-camera":
+        from .capture.check import main as check_main
+
+        return check_main()
     if args.cmd == "sfm":
-        from .colmap_sfm import run_sfm
+        from .recon.colmap_sfm import run_sfm
 
         run_sfm(args.scene, matching=args.matching, device=args.device, overwrite=args.overwrite)
     elif args.cmd == "train":
-        from .trainer import train
+        from .recon.trainer import train
 
         train(
             args.scene,
@@ -46,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             eval_every=args.eval_every,
         )
     elif args.cmd == "render":
-        from .render import render
+        from .recon.render import render
 
         render(args.out, n_frames=args.n_frames, fps=args.fps)
     return 0

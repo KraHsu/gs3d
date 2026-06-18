@@ -1,13 +1,13 @@
-"""Quick smoke test: detect the D435i, grab one aligned frame, print stats.
+"""Smoke test: detect the D435i, grab one aligned frame, print stats.
 
-Run:  uv run python scripts/check_camera.py
+Run:  gs3d check-camera   (or: uv run python -m gs3d check-camera)
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from realsense_capture.camera import RealSenseCamera, list_devices
+from .camera import RealSenseCamera, list_devices
 
 
 def main() -> int:

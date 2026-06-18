@@ -24,7 +24,7 @@ venv/
 *.mp4
 
 # Sample datasets downloaded for verification
-/recon/samples/
+/samples/
 
 # Logs
 *.log

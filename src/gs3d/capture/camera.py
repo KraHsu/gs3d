@@ -14,8 +14,8 @@ try:
     import pyrealsense2 as rs
 except ImportError as exc:  # pragma: no cover - import guard for clearer error
     raise ImportError(
-        "pyrealsense2 is not installed. Run `uv sync` inside the `capture/` project "
-        "on a Windows machine with the Intel RealSense SDK / drivers available."
+        "pyrealsense2 is not installed. Install the capture extra on Windows: "
+        "`uv sync --extra capture` (with the Intel RealSense SDK / drivers available)."
     ) from exc
 
 

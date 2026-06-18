@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# One-time setup for the gsplat reconstruction project on the Ubuntu/H20 server.
-# Installs uv, configures CUDA, syncs deps, and warms up gsplat's CUDA build.
+# One-time setup for the recon subpart on the Ubuntu/H20 server.
+# Installs uv, configures CUDA, syncs the `recon` extra, warms up gsplat's CUDA build.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."   # → recon/
+cd "$(dirname "$0")/.."   # → project root
 
 # 1. uv ---------------------------------------------------------------------
 if ! command -v uv >/dev/null 2>&1; then
@@ -26,8 +26,8 @@ fi
 
 # 3. Python env + deps -------------------------------------------------------
 uv python pin 3.11
-echo "[setup] syncing dependencies (torch cu124, gsplat, pycolmap, ...) ..."
-uv sync
+echo "[setup] syncing the recon extra (torch cu124, gsplat, pycolmap, ...) ..."
+uv sync --extra recon
 
 # 4. Warm up gsplat (compiles its CUDA kernels on first import) --------------
 echo "[setup] verifying torch CUDA + compiling gsplat (first import is slow) ..."
@@ -41,4 +41,4 @@ from gsplat import rasterization, DefaultStrategy  # noqa: F401
 print("gsplat", gsplat.__version__, "ready")
 PY
 
-echo "[setup] done. Try:  bash scripts/get_sample.sh && uv run gs3d train ./samples/<scene> -o ../outputs/sample --max-steps 1000"
+echo "[setup] done. Try:  bash scripts/get_sample.sh && uv run gs3d train ./samples/tandt/truck -o outputs/sample --max-steps 1000"

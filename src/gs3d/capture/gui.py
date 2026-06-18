@@ -132,8 +132,12 @@ class CaptureWindow(QWidget):
 
     @staticmethod
     def _default_output_dir() -> Path:
-        # repo_root/data  (…/capture/realsense_capture/gui.py → up 3)
-        return Path(__file__).resolve().parents[2] / "data"
+        # Walk up to the project root (the dir containing pyproject.toml), use its data/.
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            if (parent / "pyproject.toml").exists():
+                return parent / "data"
+        return Path.cwd() / "data"
 
     def _browse(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Output folder", self.out_edit.text())

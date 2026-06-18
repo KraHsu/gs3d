@@ -1,98 +1,104 @@
-# 3DGS: RealSense D435i → 3D Gaussian Splatting
+# gs3d — RealSense D435i → 3D Gaussian Splatting
 
-A basic but complete 3D Gaussian Splatting (3DGS) pipeline, split across two machines by
-hardware reality:
+A single Python project (`uv` + `pyproject.toml`) with **two subparts**:
 
-| Stage | Where | What |
-|-------|-------|------|
-| **1. Capture** | Windows (this PC, D435i attached) | PySide6 GUI records an RGB(+depth) image set of a scene |
-| **2. Reconstruct** | Ubuntu server (`ssh H20`, 8× H20 GPU) | COLMAP SfM (via `pycolmap`) + [`gsplat`](https://github.com/nerfstudio-project/gsplat) training |
+| Subpart | Package | Where it runs | What it does |
+|---------|---------|---------------|--------------|
+| **Data acquisition** | `gs3d.capture` | Windows (D435i attached) | PySide6 GUI records an RGB(+depth) image set |
+| **3DGS reconstruction** | `gs3d.recon` | Ubuntu + NVIDIA GPU | COLMAP SfM (`pycolmap`) + [`gsplat`](https://github.com/nerfstudio-project/gsplat) training/render |
 
-The two stages are **separate `uv` projects** (`capture/` and `recon/`) because they target
-different OSes and have disjoint dependencies. Code moves to the server via **git**; the captured
-dataset moves via **scp**.
+One codebase, one CLI (`gs3d`). The two subparts target different OSes with disjoint
+heavy dependencies, so they are split into **optional-dependency extras** with platform
+markers — each machine installs only the subset it needs:
+
+```
+Windows:  uv sync --extra capture      # pyrealsense2 + PySide6
+Ubuntu :  uv sync --extra recon        # torch (cu124) + gsplat + pycolmap
+```
+
+Code moves between machines via **git**; captured datasets move via **scp**.
 
 ```
 capture (Windows)  ──scp data/<scene>──►  recon (Ubuntu/H20)
-   PySide6 GUI                              pycolmap SfM → gsplat train → render
+  gs3d capture                              gs3d sfm → gs3d train → gs3d render
+```
+
+## Layout
+
+```
+src/gs3d/
+  capture/   camera.py  writer.py  gui.py  app.py  check.py     # subpart 1
+  recon/     colmap_sfm.py  dataset.py  model.py  trainer.py  render.py   # subpart 2
+  cli.py     # unified entry point: gs3d capture | check-camera | sfm | train | render
+scripts/     setup_server.sh  get_sample.sh  run_pipeline.sh
+data/        captured datasets (gitignored; scp'd to the server)
 ```
 
 ---
 
-## Quick start
-
-### Stage 1 — Capture (Windows)
+## Subpart 1 — Capture (Windows)
 
 ```powershell
-cd capture
-uv sync
-uv run realsense-capture        # or: uv run python -m realsense_capture
+uv sync --extra capture
+uv run gs3d check-camera          # verify the D435i is detected
+uv run gs3d capture               # launch the GUI
 ```
 
-In the GUI: pick an output folder, set a **scene name**, click **Start stream**, then orbit the
-object slowly while using **Snap** (Spacebar) or **Auto-capture every N frames**. Aim for
-80–200 images with ~70% overlap. Output lands in `data/<scene>/` with `images/`, `depth/`,
-`intrinsics.json`, `meta.json`.
+In the GUI: pick an output folder + **scene name**, **Start stream**, then orbit the subject
+slowly using **Snap** (Spacebar) or **Auto-capture every N frames**. Aim for 80–200 images
+with ~70% overlap. Output → `data/<scene>/` with `images/`, `depth/`, `intrinsics.json`,
+`meta.json`.
 
-See [`capture/README.md`](capture/README.md) for details.
+> Needs the D435i + Intel RealSense USB drivers. Stream resolution auto-falls-back to the USB
+> link's capability (USB 3 → 1280×720@30; USB 2.1 → lower). Use a USB 3 port/cable for best quality.
 
-### Stage 2 — Reconstruct (Ubuntu / H20)
+## Subpart 2 — Reconstruct (Ubuntu / H20)
 
-First, sync code and data to the server (see **Sync** below), then:
+After syncing code + data to the server (see **Sync** below):
 
 ```bash
-cd /mnt/cpfs/zch/3dgs/recon
-bash scripts/setup_server.sh                 # installs uv, sets CUDA_HOME, builds gsplat
-uv run gs3d sfm   ../data/<scene>            # pycolmap → sparse/0
-uv run gs3d train ../data/<scene> -o ../outputs/<scene>
-uv run gs3d render ../outputs/<scene>        # orbit mp4 + point_cloud.ply + PSNR
+bash scripts/setup_server.sh                      # uv, CUDA_HOME, uv sync --extra recon, build gsplat
+uv run gs3d sfm    data/<scene>                   # pycolmap → sparse/0
+uv run gs3d train  data/<scene> -o outputs/<scene>
+uv run gs3d render outputs/<scene>                # eval PSNR/SSIM + orbit.mp4 + point_cloud.ply
+# or all three:
+bash scripts/run_pipeline.sh data/<scene>
 ```
 
-To verify the pipeline **without the camera**, download a small public scene first:
+Verify the pipeline **without the camera** first:
 
 ```bash
-bash scripts/get_sample.sh                   # → recon/samples/<scene>
-uv run gs3d train ./samples/<scene> -o ../outputs/sample --max-steps 1000
+bash scripts/get_sample.sh                        # downloads tandt/truck etc.
+uv run gs3d train ./samples/tandt/truck -o outputs/truck --max-steps 1000
+uv run gs3d render outputs/truck
 ```
-
-See [`recon/README.md`](recon/README.md) for details.
 
 ---
 
 ## Sync between machines
 
-**Code (git).** A bare repo on the server avoids needing a third-party host:
+**Code (git).** A bare repo on the server (no third-party host needed):
 
 ```powershell
-# one-time, from Windows repo root
 ssh H20 "git init --bare /mnt/cpfs/zch/3dgs.git"
 git remote add origin "ssh://H20/mnt/cpfs/zch/3dgs.git"
 git push -u origin main
-# on the server, one-time
 ssh H20 "git clone /mnt/cpfs/zch/3dgs.git /mnt/cpfs/zch/3dgs"
 ```
 
-Thereafter: `git push` from Windows, `git -C /mnt/cpfs/zch/3dgs pull` on the server.
-(Alternatively use GitHub/GitLab as `origin`.)
+Thereafter `git push` from Windows, `git -C /mnt/cpfs/zch/3dgs pull` on the server.
 
-**Dataset (scp).** Captured scenes are gitignored; copy them directly:
+**Dataset (scp):**
 
 ```powershell
 scp -r data/<scene> H20:/mnt/cpfs/zch/3dgs/data/
 ```
 
----
-
-## Requirements
-
-- **Windows side:** [uv](https://docs.astral.sh/uv/), an Intel RealSense D435i, RealSense USB drivers.
-- **Server side:** NVIDIA GPU + driver, CUDA toolkit at `/usr/local/cuda` (12.x), git. `uv` and the
-  rest are installed by `recon/scripts/setup_server.sh`.
-
-## Layout
+## Outputs (`outputs/<scene>/`)
 
 ```
-capture/   Windows PySide6 capture app (uv project)
-recon/     Ubuntu gsplat reconstruction (uv project)
-data/      captured datasets (gitignored; scp'd to server)
+ckpt.pt            # Gaussian params + config (for re-rendering)
+point_cloud.ply    # opens in standard 3DGS viewers (SuperSplat, etc.)
+orbit.mp4          # fly-through video
+eval/*.png         # held-out gt | prediction comparisons
 ```
