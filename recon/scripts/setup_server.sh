@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# One-time setup for the gsplat reconstruction project on the Ubuntu/H20 server.
+# Installs uv, configures CUDA, syncs deps, and warms up gsplat's CUDA build.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."   # → recon/
+
+# 1. uv ---------------------------------------------------------------------
+if ! command -v uv >/dev/null 2>&1; then
+  echo "[setup] installing uv ..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+echo "[setup] uv $(uv --version)"
+
+# 2. CUDA toolkit (needed for gsplat's CUDA extension build) -----------------
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+if [ ! -x "$CUDA_HOME/bin/nvcc" ]; then
+  echo "[setup] WARNING: nvcc not found at $CUDA_HOME/bin/nvcc."
+  echo "        Set CUDA_HOME to your CUDA toolkit before re-running."
+else
+  echo "[setup] nvcc: $($CUDA_HOME/bin/nvcc --version | tail -1)"
+fi
+
+# 3. Python env + deps -------------------------------------------------------
+uv python pin 3.11
+echo "[setup] syncing dependencies (torch cu124, gsplat, pycolmap, ...) ..."
+uv sync
+
+# 4. Warm up gsplat (compiles its CUDA kernels on first import) --------------
+echo "[setup] verifying torch CUDA + compiling gsplat (first import is slow) ..."
+uv run python - <<'PY'
+import torch
+print("torch", torch.__version__, "cuda available:", torch.cuda.is_available())
+assert torch.cuda.is_available(), "CUDA not visible to torch"
+print("device:", torch.cuda.get_device_name(0))
+import gsplat
+from gsplat import rasterization, DefaultStrategy  # noqa: F401
+print("gsplat", gsplat.__version__, "ready")
+PY
+
+echo "[setup] done. Try:  bash scripts/get_sample.sh && uv run gs3d train ./samples/<scene> -o ../outputs/sample --max-steps 1000"

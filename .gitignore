@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# uv / virtualenvs
+.venv/
+venv/
+.uv/
+
+# Captured datasets (transferred via scp, not git)
+/data/*
+!/data/.gitkeep
+
+# Training outputs
+/outputs/
+**/outputs/
+*.ply
+*.pt
+*.ckpt
+*.mp4
+
+# Sample datasets downloaded for verification
+/recon/samples/
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
