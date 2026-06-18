@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -168,22 +167,22 @@ class CaptureWindow(QWidget):
         self.ae_chk = QCheckBox("Auto exposure")
         self.ae_chk.setChecked(True)
         self.ae_chk.toggled.connect(self._on_ae_toggled)
-        self.exp_slider = QSlider(Qt.Orientation.Horizontal)
-        self.exp_slider.valueChanged.connect(self._on_exposure)
-        self.exp_label = QLabel("exp —")
-        self.exp_label.setStyleSheet("color:#9aa0a8;")
-        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self.gain_slider.valueChanged.connect(self._on_gain)
-        self.gain_label = QLabel("gain —")
-        self.gain_label.setStyleSheet("color:#9aa0a8;")
+        self.exp_spin = QSpinBox()
+        self.exp_spin.setSuffix(" us")
+        self.exp_spin.setKeyboardTracking(False)  # apply on Enter / focus-out, not per keystroke
+        self.exp_spin.valueChanged.connect(self._on_exposure)
+        self.gain_spin = QSpinBox()
+        self.gain_spin.setKeyboardTracking(False)
+        self.gain_spin.valueChanged.connect(self._on_gain)
         exp_row = QHBoxLayout()
         exp_row.addWidget(self.ae_chk)
+        exp_row.addSpacing(12)
         exp_row.addWidget(QLabel("Exposure"))
-        exp_row.addWidget(self.exp_slider, 2)
-        exp_row.addWidget(self.exp_label)
+        exp_row.addWidget(self.exp_spin)
+        exp_row.addSpacing(12)
         exp_row.addWidget(QLabel("Gain"))
-        exp_row.addWidget(self.gain_slider, 1)
-        exp_row.addWidget(self.gain_label)
+        exp_row.addWidget(self.gain_spin)
+        exp_row.addStretch(1)
 
         cam_box = QGroupBox("Camera")
         cam_lay = QVBoxLayout(cam_box)
@@ -340,40 +339,36 @@ class CaptureWindow(QWidget):
         self.ae_chk.setEnabled(has_exp)
         if has_exp:
             lo, hi, dflt = cam.exposure_range()
-            self.exp_slider.blockSignals(True)
-            self.exp_slider.setRange(int(lo), int(hi))
-            self.exp_slider.setValue(int(dflt))
-            self.exp_slider.blockSignals(False)
-            self.exp_label.setText(f"exp {int(dflt)}")
+            self.exp_spin.blockSignals(True)
+            self.exp_spin.setRange(int(lo), int(hi))
+            self.exp_spin.setValue(int(dflt))
+            self.exp_spin.blockSignals(False)
         if cam.supports_gain():
             glo, ghi, gd = cam.gain_range()
-            self.gain_slider.blockSignals(True)
-            self.gain_slider.setRange(int(glo), int(ghi))
-            self.gain_slider.setValue(int(gd))
-            self.gain_slider.blockSignals(False)
-            self.gain_label.setText(f"gain {int(gd)}")
-        # Default to auto-exposure on; sliders take over when it is unchecked.
+            self.gain_spin.blockSignals(True)
+            self.gain_spin.setRange(int(glo), int(ghi))
+            self.gain_spin.setValue(int(gd))
+            self.gain_spin.blockSignals(False)
+        # Default to auto-exposure on; the inputs take over when it is unchecked.
         self.ae_chk.setChecked(True)
         cam.set_auto_exposure(True)
-        self.exp_slider.setEnabled(False)
-        self.gain_slider.setEnabled(False)
+        self.exp_spin.setEnabled(False)
+        self.gain_spin.setEnabled(False)
 
     def _on_ae_toggled(self, on: bool) -> None:
         if self.camera is not None:
             self.camera.set_auto_exposure(on)
-            if not on:  # push current slider values as the manual setpoint
-                self.camera.set_exposure(self.exp_slider.value())
-                self.camera.set_gain(self.gain_slider.value())
-        self.exp_slider.setEnabled(not on)
-        self.gain_slider.setEnabled(not on)
+            if not on:  # push current input values as the manual setpoint
+                self.camera.set_exposure(self.exp_spin.value())
+                self.camera.set_gain(self.gain_spin.value())
+        self.exp_spin.setEnabled(not on)
+        self.gain_spin.setEnabled(not on)
 
     def _on_exposure(self, val: int) -> None:
-        self.exp_label.setText(f"exp {val}")
         if self.camera is not None and not self.ae_chk.isChecked():
             self.camera.set_exposure(val)
 
     def _on_gain(self, val: int) -> None:
-        self.gain_label.setText(f"gain {val}")
         if self.camera is not None and not self.ae_chk.isChecked():
             self.camera.set_gain(val)
 
