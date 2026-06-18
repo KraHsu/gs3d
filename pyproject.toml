@@ -33,6 +33,8 @@ recon = [
     # Interactive GPU viewer (renders on the server, streams to a browser).
     "viser>=0.2",
     "nerfview>=0.0.3",
+    "matplotlib",  # nerfview render panel (undeclared by nerfview)
+    "splines",     # nerfview camera paths (undeclared by nerfview)
 ]
 
 [project.scripts]
