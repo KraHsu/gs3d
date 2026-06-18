@@ -26,6 +26,12 @@ class CameraView:
 
 
 def _camera_K(cam: "pycolmap.Camera") -> np.ndarray:
+    # Prefer the intrinsic matrix directly when available (most robust).
+    if hasattr(cam, "calibration_matrix"):
+        try:
+            return np.asarray(cam.calibration_matrix(), dtype=np.float64)
+        except Exception:
+            pass
     model = cam.model.name if hasattr(cam.model, "name") else str(cam.model)
     p = list(cam.params)
     if "SIMPLE_PINHOLE" in model or "SIMPLE_RADIAL" in model:
@@ -44,12 +50,18 @@ def _image_w2c(img: "pycolmap.Image") -> np.ndarray:
     if hasattr(img, "cam_from_world"):
         cfw = img.cam_from_world
         cfw = cfw() if callable(cfw) else cfw
-        w2c[:3, :3] = cfw.rotation.matrix()
-        w2c[:3, 3] = np.asarray(cfw.translation)
+        w2c[:3, :4] = np.asarray(cfw.matrix())  # Rigid3d -> 3x4 [R|t]
     else:  # older pycolmap API
         w2c[:3, :3] = img.rotmat()
         w2c[:3, 3] = np.asarray(img.tvec)
     return w2c
+
+
+def _is_registered(img: "pycolmap.Image") -> bool:
+    reg = getattr(img, "registered", None)  # pycolmap 0.6.x
+    if reg is None:
+        reg = getattr(img, "has_pose", True)  # newer pycolmap
+    return bool(reg)
 
 
 class ColmapDataset:
@@ -76,7 +88,7 @@ class ColmapDataset:
         # Camera views, ordered by image name for stable train/test splits.
         self.views: list[CameraView] = []
         for img in sorted(rec.images.values(), key=lambda im: im.name):
-            if not img.has_pose:
+            if not _is_registered(img):
                 continue  # unregistered image
             cam = rec.cameras[img.camera_id]
             K = _camera_K(cam)
