@@ -41,13 +41,14 @@ data/        captured datasets (gitignored; scp'd to the server)
 ```powershell
 uv sync --extra capture
 uv run gs3d check-camera          # verify the D435i is detected
-uv run gs3d capture               # launch the GUI
+uv run gs3d capture               # launch the dataset recorder GUI
 ```
 
-In the GUI: pick an output folder + **scene name**, **Start stream**, then orbit the subject
-slowly using **Snap** (Spacebar) or **Auto-capture every N frames**. Aim for 80–200 images
-with ~70% overlap. Output → `data/<scene>/` with `images/`, `depth/`, `intrinsics.json`,
-`meta.json`.
+In the GUI: set an output folder + **Dataset** name, click **Start camera**, then press
+**● Record** (or `R`) and orbit the subject slowly for a loop or two — frames are captured
+continuously (one every *N* previewed frames; default 3). Press **■ Stop** to finish; **Snap**
+(Spacebar) takes single shots. Aim for ~100–300 frames with ~70% overlap. Output →
+`data/<dataset>/` with `images/`, `depth/`, `intrinsics.json`, `meta.json`.
 
 > Needs the D435i + Intel RealSense USB drivers. Stream resolution auto-falls-back to the USB
 > link's capability (USB 3 → 1280×720@30; USB 2.1 → 640×480@15). Use a USB 3 port/cable for best quality.
