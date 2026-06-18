@@ -38,21 +38,38 @@ TIPS = (
     "keeping ~70% overlap. Prefer a textured, well-lit, static scene. ~100–300 frames is plenty."
 )
 
+# Cohesive dark theme (does not rely on the OS palette).
 APP_QSS = """
-QWidget { font-size: 13px; color: #222; }
+QWidget { background: #1e1f22; color: #e4e6eb; font-size: 13px; }
+QLabel { background: transparent; }
 QGroupBox {
-    font-weight: 600; border: 1px solid #d6d6d6; border-radius: 8px;
-    margin-top: 10px; padding: 10px 10px 8px 10px;
+    background: #232529; font-weight: 600;
+    border: 1px solid #3a3d42; border-radius: 8px;
+    margin-top: 12px; padding: 12px 10px 10px 10px;
 }
-QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #555; }
+QGroupBox::title {
+    subcontrol-origin: margin; left: 12px; padding: 0 5px; color: #9aa0a8;
+}
 QPushButton {
-    padding: 6px 14px; border: 1px solid #c4c4c4; border-radius: 6px; background: #fafafa;
+    background: #313338; color: #e4e6eb; border: 1px solid #3a3d42;
+    border-radius: 6px; padding: 6px 14px;
 }
-QPushButton:hover { background: #f0f0f0; }
-QPushButton:pressed { background: #e8e8e8; }
-QPushButton:disabled { color: #aaa; background: #f2f2f2; border-color: #e0e0e0; }
-QLineEdit, QSpinBox { padding: 4px 6px; border: 1px solid #c4c4c4; border-radius: 6px; background: white; }
-QCheckBox { spacing: 6px; }
+QPushButton:hover { background: #3a3d42; }
+QPushButton:pressed { background: #2a2c30; }
+QPushButton:disabled { color: #6b7078; background: #2a2b2e; border-color: #303236; }
+QLineEdit, QSpinBox {
+    background: #2b2d31; color: #e4e6eb; border: 1px solid #3a3d42;
+    border-radius: 6px; padding: 5px 7px; selection-background-color: #2ea043;
+}
+QLineEdit:focus, QSpinBox:focus { border-color: #4a87e8; }
+QLineEdit:disabled, QSpinBox:disabled { color: #8a8f98; background: #26272b; }
+QCheckBox { spacing: 6px; background: transparent; }
+QCheckBox::indicator {
+    width: 16px; height: 16px; border: 1px solid #4a4d52;
+    border-radius: 4px; background: #2b2d31;
+}
+QCheckBox::indicator:checked { background: #2ea043; border-color: #2ea043; }
+QToolTip { background: #26282c; color: #e4e6eb; border: 1px solid #3a3d42; }
 """
 
 
@@ -104,7 +121,7 @@ class CaptureWindow(QWidget):
         self.name_edit = QLineEdit("dataset01")
         self.name_edit.textChanged.connect(self._refresh_target)
         self.target_label = QLabel()
-        self.target_label.setStyleSheet("color:#888;")
+        self.target_label.setStyleSheet("color:#9aa0a8;")
 
         ds_form = QHBoxLayout()
         ds_form.addWidget(QLabel("Output:"))
@@ -121,7 +138,9 @@ class CaptureWindow(QWidget):
         self.preview = QLabel("Preview — press Start camera")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(960, 540)
-        self.preview.setStyleSheet("background:#111; color:#888;")
+        self.preview.setStyleSheet(
+            "background:#141517; color:#777; border:1px solid #3a3d42; border-radius:8px;"
+        )
 
         # Camera controls --------------------------------------------------
         self.cam_btn = QPushButton("Start camera")
@@ -130,7 +149,7 @@ class CaptureWindow(QWidget):
         self.imu_chk = QCheckBox("Capture IMU")
         self.imu_chk.setToolTip("Record D435i accel+gyro to imu.jsonl (set before Start camera).")
         self.profile_label = QLabel("")
-        self.profile_label.setStyleSheet("color:#888;")
+        self.profile_label.setStyleSheet("color:#9aa0a8;")
         cam_row = QHBoxLayout()
         cam_row.addWidget(self.cam_btn)
         cam_row.addWidget(self.depth_chk)
@@ -152,7 +171,7 @@ class CaptureWindow(QWidget):
         self.every_spin.setToolTip("Save one frame out of every N previewed frames while recording.")
 
         self.rec_indicator = QLabel("")
-        self.rec_indicator.setStyleSheet("color:#e33; font-weight:bold;")
+        self.rec_indicator.setStyleSheet("color:#ff5c5c; font-weight:bold;")
         self.stats_label = QLabel("Frames: 0")
         self.stats_label.setStyleSheet("font-weight:bold;")
 
@@ -174,7 +193,7 @@ class CaptureWindow(QWidget):
         self.status = QLabel("Idle.")
         tips = QLabel(TIPS)
         tips.setWordWrap(True)
-        tips.setStyleSheet("color:#666;")
+        tips.setStyleSheet("color:#8a8f98;")
 
         root = QVBoxLayout(self)
         root.addWidget(ds_box)
@@ -192,17 +211,17 @@ class CaptureWindow(QWidget):
         if recording:
             self.rec_btn.setText("■  Stop")
             self.rec_btn.setStyleSheet(
-                "#recordBtn{background:#e5484d;color:white;border:1px solid #e5484d;"
+                "#recordBtn{background:#da3633;color:white;border:1px solid #da3633;"
                 "border-radius:6px;padding:6px 14px;font-weight:700;}"
-                "#recordBtn:hover{background:#d83a3f;}"
+                "#recordBtn:hover{background:#c52f2c;}"
             )
         else:
             self.rec_btn.setText("●  Record")
             self.rec_btn.setStyleSheet(
-                "#recordBtn{color:#1a7f37;border:1px solid #2ea043;background:#f3fbf4;"
+                "#recordBtn{color:#3fb950;background:#1d2a20;border:1px solid #2ea043;"
                 "border-radius:6px;padding:6px 14px;font-weight:700;}"
-                "#recordBtn:hover{background:#e8f6ea;}"
-                "#recordBtn:disabled{color:#aaa;border-color:#e0e0e0;background:#f2f2f2;}"
+                "#recordBtn:hover{background:#22331f;}"
+                "#recordBtn:disabled{color:#6b7078;border-color:#303236;background:#2a2b2e;}"
             )
 
     @staticmethod
