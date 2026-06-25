@@ -62,6 +62,9 @@ def render(
     fps: int = 30,
     device: str = "cuda",
 ) -> None:
+    from ._cuda import ensure_cuda_toolkit
+
+    ensure_cuda_toolkit()  # let gsplat JIT-compile its kernels (Blackwell/cu128)
     out_dir = Path(out_dir)
     splats, config = load_checkpoint(out_dir / "ckpt.pt", device=device)
     sh_degree = config["sh_degree"]

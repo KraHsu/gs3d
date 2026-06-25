@@ -13,7 +13,7 @@ markers — each machine installs only the subset it needs:
 
 ```
 Windows:  uv sync --extra capture      # pyrealsense2 + PySide6
-Ubuntu :  uv sync --extra recon        # torch (cu124) + gsplat + pycolmap
+Ubuntu :  uv sync --extra recon        # torch (cu128) + gsplat + pycolmap
 ```
 
 Code moves between machines via **git**; captured datasets move via **scp**.
@@ -108,6 +108,42 @@ bash scripts/get_sample.sh                        # downloads tandt/truck etc.
 uv run gs3d train ./samples/tandt/truck -o outputs/truck --max-steps 1000
 uv run gs3d render outputs/truck
 ```
+
+### Interactive viewers
+
+```bash
+uv run gs3d view     outputs/<scene>              # a gs3d ckpt.pt (learned RGB)
+uv run gs3d view-seg <checkpoint.pth>             # a segmented reference-3DGS model
+```
+
+Both render on the server GPU and stream to a browser (tunnel with
+`ssh -L 8080:localhost:8080 <server>`, then open `http://localhost:8080`).
+
+`view-seg` loads a **reference-3DGS / INRIA gaussian-splatting** checkpoint that
+carries a per-Gaussian instance id (`gaussians._cluster_indices`) — e.g. the
+output of our semantic-segmentation stage — and adds a GUI panel to toggle
+between learned **RGB** and per-instance **Segmentation** colours, **isolate** a
+single instance id (others dimmed), and gray-out the background cluster. Geometry
+and instance ids come from the *same* checkpoint tensors, so they always align
+(the exported `point_cloud.ply` may have a different Gaussian count and is not
+used for segmentation). It accepts a `.pth` checkpoint or a reference `.ply`
+(RGB only — a PLY has no instance ids).
+
+### Blackwell / RTX 50-series GPUs (sm_120)
+
+The recon extra pins **torch cu128**, which ships sm_120 kernels (it still runs
+on the H20). gsplat has no cu128 prebuilt wheel, so it JIT-compiles its CUDA
+kernels and needs a CUDA **≥ 12.8** toolkit. If you don't have one (no root, no
+system CUDA), vendor a self-contained compiler once — no sudo:
+
+```bash
+bash scripts/setup_cuda_jit.sh        # → ./.cuda-jit/cuda128 (nvcc 12.8, via micromamba)
+```
+
+The recon commands auto-detect this prefix (an existing `nvcc` on `CUDA_HOME`/
+`PATH` takes precedence, e.g. on the H20). Note: gsplat's JIT also needs Python
+headers — use a **uv-managed** Python (`uv python pin 3.11`), not a bare system
+Python without `python3.x-dev`.
 
 ---
 

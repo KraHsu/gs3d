@@ -50,6 +50,14 @@ def main(argv: list[str] | None = None) -> int:
     p_vw.add_argument("out", help="Output directory containing ckpt.pt")
     p_vw.add_argument("--port", type=int, default=8080)
 
+    p_vs = sub.add_parser(
+        "view-seg",
+        help="Interactive GPU viewer for a segmented reference-3DGS checkpoint "
+        "(RGB / per-instance segmentation toggle)",
+    )
+    p_vs.add_argument("checkpoint", help="reference-3DGS .pth (with _cluster_indices) or .ply")
+    p_vs.add_argument("--port", type=int, default=8080)
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -84,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
         from .recon.viewer import view
 
         view(args.out, port=args.port)
+    elif args.cmd == "view-seg":
+        from .recon.viewer import view_seg
+
+        view_seg(args.checkpoint, port=args.port)
     return 0
 
 

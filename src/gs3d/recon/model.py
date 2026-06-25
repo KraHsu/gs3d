@@ -83,9 +83,15 @@ def rasterize_splats(
     width: int,
     height: int,
     sh_degree: int | None,
+    override_colors: torch.Tensor | None = None,  # [N,3] flat RGB; bypasses SH
     **kwargs,
 ):
-    colors = torch.cat([splats["sh0"], splats["shN"]], dim=1)  # [N, K, 3]
+    if override_colors is not None:
+        # Per-Gaussian flat colours (e.g. instance ids) — composite directly, no SH.
+        colors = override_colors
+        sh_degree = None
+    else:
+        colors = torch.cat([splats["sh0"], splats["shN"]], dim=1)  # [N, K, 3]
     render_colors, render_alphas, info = rasterization(
         means=splats["means"],
         quats=splats["quats"],

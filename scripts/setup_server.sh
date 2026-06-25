@@ -28,7 +28,7 @@ fi
 uv python pin 3.11
 
 # Optional fast package mirror (e.g. in China). torch still comes from the
-# explicit pytorch-cu124 index; other wheels (nvidia-*, etc.) use this default.
+# explicit pytorch-cu128 index; other wheels (nvidia-*, etc.) use this default.
 #   GS3D_INDEX=https://mirrors.aliyun.com/pypi/simple/ bash scripts/setup_server.sh
 INDEX_ARG=""
 if [ -n "${GS3D_INDEX:-}" ]; then
@@ -36,7 +36,7 @@ if [ -n "${GS3D_INDEX:-}" ]; then
   echo "[setup] package index: ${GS3D_INDEX}"
 fi
 
-echo "[setup] syncing the recon extra (torch cu124, gsplat, pycolmap, ...) ..."
+echo "[setup] syncing the recon extra (torch cu128, gsplat, pycolmap, ...) ..."
 uv sync --extra recon ${INDEX_ARG}
 
 # 4. Warm up gsplat (compiles its CUDA kernels on first import) --------------

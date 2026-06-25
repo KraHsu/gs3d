@@ -18,7 +18,7 @@ capture = [
 ]
 # Subpart 2 — 3D Gaussian Splatting (Ubuntu + NVIDIA GPU).
 recon = [
-    "torch==2.5.1; sys_platform == 'linux'",
+    "torch==2.8.0; sys_platform == 'linux'",
     "gsplat>=1.4.0; sys_platform == 'linux'",
     "pycolmap>=0.6,<0.7; sys_platform == 'linux'",
     # gsplat JIT-compiles its CUDA kernels on first use; these are required for that build.
@@ -51,11 +51,14 @@ packages = ["src/gs3d"]
 # Resolve the single universal lock for just the two target platforms.
 environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
 
-# PyTorch CUDA 12.4 wheels (Linux; compatible with the H20's driver 535).
+# PyTorch CUDA 12.8 wheels (Linux). cu128 ships sm_120 kernels for Blackwell
+# consumer GPUs (e.g. RTX 50-series); still runs on the H20 (driver 535) via
+# CUDA minor-version compatibility. gsplat has no cu128 prebuilt wheel, so it
+# JIT-compiles its kernels and needs a matching CUDA 12.8 toolkit (see README).
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu124" }
+torch = { index = "pytorch-cu128" }

@@ -11,6 +11,10 @@ dist/
 venv/
 .uv/
 
+# Vendored CUDA toolkit for gsplat's JIT build (machine-specific; see
+# scripts/setup_cuda_jit.sh to recreate). Hundreds of MB, never committed.
+/.cuda-jit/
+
 # Captured datasets (transferred via scp, not git)
 /data/*
 !/data/.gitkeep

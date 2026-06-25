@@ -66,6 +66,9 @@ def train(
 ) -> Path:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for gsplat training but is not available.")
+    from ._cuda import ensure_cuda_toolkit
+
+    ensure_cuda_toolkit()  # let gsplat JIT-compile its kernels (Blackwell/cu128)
     torch.manual_seed(seed)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
