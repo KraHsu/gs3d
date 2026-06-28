@@ -154,6 +154,10 @@ uv run gs3d export-sim <checkpoint.pth> -o export/<scene> --ids 26 4
 uv pip install genesis-world             # heavy, version-strict — not in the lock
 uv run gs3d sim-genesis export/<scene> --backend cpu --record drop.mp4
 #   --layout layout   reproduce captured world poses (else 'drop' = grid above plane)
+
+# 4. photorealistic: physics on the hulls, but render the REAL Gaussians (survey §4 / C)
+uv run gs3d sim-render export/<scene> --checkpoint <checkpoint.pth> --record photoreal.mp4
+#   --aspect-max / --scale-quantile / --opacity-min  tune the anti-spike filter
 ```
 
 `export-clusters` filters floater clusters (`--min-points`) and flags the
@@ -167,10 +171,18 @@ static flag. The URDFs are standard, so the same scene also loads in
 > are just arbitrary). Recover the factor from the D435i depth
 > (`depth_init.estimate_colmap_scale`) for metric assets.
 >
-> **Still approximate.** v1 collision is a convex hull (CoACD splits non-convex
-> objects when it helps); the *visual* mesh is that hull too. A photorealistic
-> surface (2DGS/PGSR) and VLM-estimated physical parameters are the documented
-> next upgrades — see the survey's §4 and Appendix B.
+> **Convex hulls are unrecognisable — use `sim-render` to see the real objects.**
+> The hull is fine as a *collision* proxy but a poor *visual*. `sim-render` is the
+> survey's family-C route: physics still runs on the hulls in Genesis, but each
+> object's per-frame rigid pose drives *its own Gaussians*, which are rasterised
+> with gsplat — so the video shows the captured appearance moving under physics,
+> no retraining needed. It filters needle/floater Gaussians (which streak into
+> spikes once rotated) via `--aspect-max` / `--scale-quantile` / `--opacity-min`.
+>
+> **Still approximate.** Collision is a convex hull (CoACD splits non-convex
+> objects when it helps). A textured *visual mesh* (2DGS/PGSR surface extraction)
+> and VLM-estimated physical parameters are the orthogonal next upgrades — see the
+> survey's §4 and Appendix B.
 
 ### Blackwell / RTX 50-series GPUs (sm_120)
 

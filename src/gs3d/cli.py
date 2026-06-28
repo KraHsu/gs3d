@@ -103,6 +103,28 @@ def main(argv: list[str] | None = None) -> int:
     p_sg.add_argument("--record", default=None, help="Write an mp4 of a fixed camera")
     p_sg.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
 
+    p_sr = sub.add_parser(
+        "sim-render",
+        help="Physics-driven photorealistic render: drop the exported objects in "
+        "Genesis and rasterise their real Gaussians with gsplat -> mp4",
+    )
+    p_sr.add_argument("export_dir", help="Directory produced by export-sim (has scene.json)")
+    p_sr.add_argument("--checkpoint", required=True,
+                      help="The segmented reference-3DGS .pth the scene was exported from")
+    p_sr.add_argument("--record", required=True, help="Output mp4 path")
+    p_sr.add_argument("--steps", type=int, default=250)
+    p_sr.add_argument("--fps", type=int, default=60)
+    p_sr.add_argument("--width", type=int, default=960)
+    p_sr.add_argument("--height", type=int, default=720)
+    p_sr.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
+    p_sr.add_argument("--bg", type=float, default=0.0, help="Background grey level 0..1")
+    p_sr.add_argument("--opacity-min", type=float, default=0.1,
+                      help="Drop Gaussians below this (sigmoid) opacity")
+    p_sr.add_argument("--aspect-max", type=float, default=18.0,
+                      help="Drop needle Gaussians whose axis ratio exceeds this (anti-spike)")
+    p_sr.add_argument("--scale-quantile", type=float, default=0.97,
+                      help="Drop the largest Gaussians above this size quantile")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -176,6 +198,23 @@ def main(argv: list[str] | None = None) -> int:
             show_viewer=args.viewer,
             record=args.record,
             backend=args.backend,
+        )
+    elif args.cmd == "sim-render":
+        from .recon.export.sim_render import sim_render
+
+        sim_render(
+            args.export_dir,
+            args.checkpoint,
+            args.record,
+            steps=args.steps,
+            fps=args.fps,
+            width=args.width,
+            height=args.height,
+            backend=args.backend,
+            bg=args.bg,
+            opacity_min=args.opacity_min,
+            aspect_max=args.aspect_max,
+            scale_quantile=args.scale_quantile,
         )
     return 0
 
