@@ -125,6 +125,36 @@ def main(argv: list[str] | None = None) -> int:
     p_sr.add_argument("--scale-quantile", type=float, default=0.97,
                       help="Drop the largest Gaussians above this size quantile")
 
+    p_vsim = sub.add_parser(
+        "view-sim",
+        help="Interactive viewer of the real Gaussians driven by physics "
+        "(orbit + time slider; survey §4 / C). Streams to a browser.",
+    )
+    p_vsim.add_argument("export_dir", help="Directory produced by export-sim (has scene.json)")
+    p_vsim.add_argument("--checkpoint", required=True,
+                        help="The segmented reference-3DGS .pth the scene was exported from")
+    p_vsim.add_argument("--port", type=int, default=8080)
+    p_vsim.add_argument("--steps", type=int, default=250)
+    p_vsim.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
+    p_vsim.add_argument("--opacity-min", type=float, default=0.1)
+    p_vsim.add_argument("--aspect-max", type=float, default=18.0)
+    p_vsim.add_argument("--scale-quantile", type=float, default=0.97)
+
+    p_ve = sub.add_parser(
+        "view-env",
+        help="Interactive viewer of the metric, gravity-aligned photoreal sim scene "
+        "(GS3DSimScene) — the robot-agnostic training environment.",
+    )
+    p_ve.add_argument("checkpoint", help="segmented reference-3DGS .pth with _cluster_indices")
+    p_ve.add_argument("--data-dir", required=True,
+                      help="Capture dir containing output/cameras.json + table_new/depth")
+    p_ve.add_argument("--scale", type=float, default=None,
+                      help="COLMAP units per metre (default: auto-estimate from D435i depth)")
+    p_ve.add_argument("--max-object-size", type=float, default=0.45,
+                      help="Clusters smaller than this (metres) become dynamic objects")
+    p_ve.add_argument("--port", type=int, default=8080)
+    p_ve.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -215,6 +245,30 @@ def main(argv: list[str] | None = None) -> int:
             opacity_min=args.opacity_min,
             aspect_max=args.aspect_max,
             scale_quantile=args.scale_quantile,
+        )
+    elif args.cmd == "view-sim":
+        from .recon.viewer import view_sim
+
+        view_sim(
+            args.export_dir,
+            args.checkpoint,
+            port=args.port,
+            steps=args.steps,
+            backend=args.backend,
+            opacity_min=args.opacity_min,
+            aspect_max=args.aspect_max,
+            scale_quantile=args.scale_quantile,
+        )
+    elif args.cmd == "view-env":
+        from .recon.viewer import view_env
+
+        view_env(
+            args.checkpoint,
+            data_dir=args.data_dir,
+            scale=args.scale,
+            max_object_size=args.max_object_size,
+            port=args.port,
+            backend=args.backend,
         )
     return 0
 

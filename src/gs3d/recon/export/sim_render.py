@@ -69,11 +69,98 @@ def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     return c2w
 
 
-def _simulate_poses(export_dir: Path, objects, steps, drop_height, spacing, backend):
+def build_per_object(
+    model, objects, s, *,
+    opacity_min=0.1, radius_quantile=0.98, scale_quantile=0.97, aspect_max=18.0,
+    device="cuda",
+):
+    """Slice each object's Gaussians into its COM-local, metric frame (the URDF link
+    frame the physics poses live in), filtering floaters and needle/blob Gaussians
+    that otherwise streak into spikes once an object rotates. Returns a per-object
+    list of tensor dicts (local means, quats, raw scales, opacities, sh0, shN)."""
+    import torch
+
+    ids = model.cluster_indices
+    sp = model.splats
+    log_inv_s = math.log(1.0 / s)
+    per_obj = []
+    for obj in objects:
+        m = ids == int(obj["id"])
+        com = torch.tensor(obj["world_pos"], dtype=torch.float32, device=device)
+        local = sp["means"][m] / s - com                 # [n,3]
+        scales = sp["scales"][m] + log_inv_s             # raw log, shrunk by 1/s
+        opac = sp["opacities"][m]
+        dist = local.norm(dim=-1)
+        sz = torch.exp(scales)
+        biggest = sz.max(dim=-1).values
+        aspect = biggest / sz.min(dim=-1).values.clamp_min(1e-8)
+        keep = torch.sigmoid(opac) >= opacity_min
+        keep &= dist <= torch.quantile(dist, radius_quantile)
+        keep &= biggest <= torch.quantile(biggest, scale_quantile)
+        keep &= aspect <= aspect_max
+        per_obj.append({
+            "local": local[keep],
+            "quats": sp["quats"][m][keep],
+            "scales": scales[keep],
+            "opac": opac[keep],
+            "sh0": sp["sh0"][m][keep],
+            "shN": sp["shN"][m][keep],
+        })
+    return per_obj
+
+
+def assemble_frame(per_obj, pos_row, quat_row, device="cuda"):
+    """Build a gsplat splats dict for one frame: each object's Gaussians rigidly
+    moved to its pose. ``pos_row`` [O,3], ``quat_row`` [O,4] (wxyz)."""
+    import torch
+
+    means, qs, scales, opac, sh0, shN = [], [], [], [], [], []
+    for o, obj in enumerate(per_obj):
+        p = torch.as_tensor(pos_row[o], dtype=torch.float32, device=device)
+        q = torch.as_tensor(quat_row[o], dtype=torch.float32, device=device)
+        R = _quat_to_rotmat(q)
+        means.append(obj["local"] @ R.T + p)
+        qs.append(_quat_mul(q, obj["quats"]))
+        scales.append(obj["scales"]); opac.append(obj["opac"])
+        sh0.append(obj["sh0"]); shN.append(obj["shN"])
+    return {
+        "means": torch.cat(means), "quats": torch.cat(qs),
+        "scales": torch.cat(scales), "opacities": torch.cat(opac),
+        "sh0": torch.cat(sh0), "shN": torch.cat(shN),
+    }
+
+
+def compute_spawns(per_obj, *, drop_height=0.5, gap=0.03, margin=1.25):
+    """Non-overlapping spawn positions on a grid, sized to the objects themselves.
+
+    Spawning objects too close (or intersecting the ground) makes the physics
+    solver violently shove them apart — the "explosion from the middle" artifact.
+    So the grid cell is the largest object footprint (+margin) and each object is
+    lifted so its lowest point starts ``drop_height`` above the plane.
+    """
+    foots, floors = [], []
+    for o in per_obj:
+        loc = o["local"].detach().cpu().numpy()
+        if loc.size == 0:
+            foots.append(0.05); floors.append(0.0); continue
+        half = np.abs(loc).max(axis=0)
+        foots.append(float(np.hypot(half[0], half[1])))
+        floors.append(float(-loc[:, 2].min()))
+    cell = 2.0 * max(foots) * margin + 0.05
+    cols = max(1, int(math.ceil(math.sqrt(len(per_obj)))))
+    spawns = np.zeros((len(per_obj), 3), dtype=np.float32)
+    for i, fl in enumerate(floors):
+        r, c = divmod(i, cols)
+        spawns[i] = [(c - (cols - 1) / 2) * cell, (r - (cols - 1) / 2) * cell, fl + gap + drop_height]
+    return spawns
+
+
+def simulate_poses(export_dir: Path, objects, steps, spawn_pos, backend):
     """Run Genesis on the dynamic objects, return per-frame (pos, quat) arrays.
 
-    Returns ``(positions, quats)`` shaped ``[T, O, 3]`` and ``[T, O, 4]`` (wxyz),
-    aligned with ``objects`` order.
+    ``spawn_pos`` is an ``[O,3]`` array of initial COM positions (see
+    `compute_spawns`). Returns ``(positions, quats)`` shaped ``[T, O, 3]`` and
+    ``[T, O, 4]`` (wxyz), aligned with ``objects`` order.
     """
     import genesis as gs
 
@@ -81,13 +168,10 @@ def _simulate_poses(export_dir: Path, objects, steps, drop_height, spacing, back
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
-    cols = max(1, int(math.ceil(math.sqrt(len(objects)))))
     ents = []
-    for i, obj in enumerate(objects):
+    for obj, p in zip(objects, spawn_pos):
         urdf = str((export_dir / obj["urdf"]).resolve())
-        r, c = divmod(i, cols)
-        pos = (c * spacing, r * spacing, drop_height + i * 0.02)
-        ents.append(scene.add_entity(gs.morphs.URDF(file=urdf, pos=pos, fixed=False)))
+        ents.append(scene.add_entity(gs.morphs.URDF(file=urdf, pos=tuple(float(x) for x in p), fixed=False)))
     scene.build()
 
     pos_t, quat_t = [], []
@@ -108,7 +192,6 @@ def sim_render(
     width: int = 960,
     height: int = 720,
     drop_height: float = 0.3,
-    spacing: float = 0.4,
     backend: str = "gpu",
     bg: float = 0.0,
     opacity_min: float = 0.1,
@@ -133,44 +216,17 @@ def sim_render(
     model = load_inria_checkpoint(checkpoint, device=device)
     if model.cluster_indices is None:
         raise ValueError(f"{checkpoint}: no _cluster_indices; cannot map physics to Gaussians")
-    ids = model.cluster_indices
-    sp = model.splats
     sh_degree = model.sh_degree
 
-    # Pre-slice each object's Gaussians into its COM-local, metric frame (matches
-    # the URDF link frame the physics poses are expressed in). Filter the floaters
-    # and oversized/elongated Gaussians that otherwise streak into long spikes.
-    log_inv_s = math.log(1.0 / s)
-    per_obj = []
-    for obj in objects:
-        m = ids == int(obj["id"])
-        com = torch.tensor(obj["world_pos"], dtype=torch.float32, device=device)
-        local = sp["means"][m] / s - com                 # [n,3]
-        scales = sp["scales"][m] + log_inv_s             # raw log, shrunk by 1/s
-        opac = sp["opacities"][m]
-        # keep: opaque enough, near the COM, not a giant blob, not a needle.
-        # Needle (high-aspect) Gaussians look thin head-on at the training view but
-        # streak into long spikes once the object is rotated, so cap the aspect ratio.
-        dist = local.norm(dim=-1)
-        sz = torch.exp(scales)
-        biggest = sz.max(dim=-1).values
-        aspect = biggest / sz.min(dim=-1).values.clamp_min(1e-8)
-        keep = torch.sigmoid(opac) >= opacity_min
-        keep &= dist <= torch.quantile(dist, radius_quantile)
-        keep &= biggest <= torch.quantile(biggest, scale_quantile)
-        keep &= aspect <= aspect_max
-        per_obj.append({
-            "local": local[keep],
-            "quats": sp["quats"][m][keep],
-            "scales": scales[keep],
-            "opac": opac[keep],
-            "sh0": sp["sh0"][m][keep],
-            "shN": sp["shN"][m][keep],
-        })
+    per_obj = build_per_object(
+        model, objects, s, opacity_min=opacity_min, radius_quantile=radius_quantile,
+        scale_quantile=scale_quantile, aspect_max=aspect_max, device=device,
+    )
     print(f"[sim-render] {len(objects)} objects, "
           f"{sum(o['local'].shape[0] for o in per_obj)} gaussians; simulating {steps} steps...")
 
-    positions, quats = _simulate_poses(export_dir, objects, steps, drop_height, spacing, backend)
+    spawns = compute_spawns(per_obj, drop_height=drop_height)
+    positions, quats = simulate_poses(export_dir, objects, steps, spawns, backend)
 
     # Fixed camera framing the union of first/last object positions.
     sample = positions[[0, -1]].reshape(-1, 3)
@@ -186,20 +242,7 @@ def sim_render(
     writer = imageio.get_writer(str(record), fps=fps, macro_block_size=1)
     with torch.no_grad():
         for t in range(steps):
-            means, qs, scales, opac, sh0, shN = [], [], [], [], [], []
-            for o, obj in enumerate(per_obj):
-                p = torch.tensor(positions[t, o], dtype=torch.float32, device=device)
-                q = torch.tensor(quats[t, o], dtype=torch.float32, device=device)
-                R = _quat_to_rotmat(q)
-                means.append(obj["local"] @ R.T + p)
-                qs.append(_quat_mul(q, obj["quats"]))
-                scales.append(obj["scales"]); opac.append(obj["opac"])
-                sh0.append(obj["sh0"]); shN.append(obj["shN"])
-            splats = {
-                "means": torch.cat(means), "quats": torch.cat(qs),
-                "scales": torch.cat(scales), "opacities": torch.cat(opac),
-                "sh0": torch.cat(sh0), "shN": torch.cat(shN),
-            }
+            splats = assemble_frame(per_obj, positions[t], quats[t], device=device)
             colors, alphas, _ = rasterize_splats(splats, viewmat, K, width, height, sh_degree)
             rgb = colors[0, ..., :3] + (1.0 - alphas[0]) * bg  # composite over grey bg
             img = (rgb.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()

@@ -218,3 +218,158 @@ def view_seg(checkpoint: str | Path, port: int = 8080, device: str = "cuda") -> 
     print("[view-seg] Ctrl+C to stop.")
     while True:
         time.sleep(1.0)
+
+
+def view_sim(
+    export_dir: str | Path,
+    checkpoint: str | Path,
+    port: int = 8080,
+    device: str = "cuda",
+    *,
+    steps: int = 250,
+    drop_height: float = 0.3,
+    backend: str = "gpu",
+    opacity_min: float = 0.1,
+    aspect_max: float = 18.0,
+    scale_quantile: float = 0.97,
+) -> None:
+    """Interactive viewer of the *real* Gaussians driven by physics (survey §4 / C).
+
+    Unlike `sim-render` (a baked mp4 from one camera), this runs the physics once,
+    then serves the photorealistic, physics-driven Gaussians in an orbitable viewer
+    with a time slider and play toggle — you control the camera, zoom, and time.
+    """
+    import json
+
+    import nerfview
+    import viser
+
+    from ._cuda import ensure_cuda_toolkit
+    from .export.sim_render import (
+        assemble_frame,
+        build_per_object,
+        compute_spawns,
+        simulate_poses,
+    )
+    from .inria import load_inria_checkpoint
+
+    ensure_cuda_toolkit()
+    export_dir = Path(export_dir)
+    scene_spec = json.loads((export_dir / "scene.json").read_text())
+    objects = scene_spec["objects"]
+    s = float(scene_spec.get("scale_colmap_per_metre", 1.0))
+
+    model = load_inria_checkpoint(checkpoint, device=device)
+    if model.cluster_indices is None:
+        raise ValueError(f"{checkpoint}: no _cluster_indices; cannot map physics to Gaussians")
+    sh_degree = model.sh_degree
+    per_obj = build_per_object(
+        model, objects, s, opacity_min=opacity_min, aspect_max=aspect_max,
+        scale_quantile=scale_quantile, device=device,
+    )
+    n_gauss = sum(o["local"].shape[0] for o in per_obj)
+    print(f"[view-sim] {len(objects)} objects, {n_gauss} gaussians; simulating {steps} steps...")
+    spawns = compute_spawns(per_obj, drop_height=drop_height)
+    positions, quats = simulate_poses(export_dir, objects, steps, spawns, backend)
+    print("[view-sim] physics done; serving viewer.")
+
+    state = {"frame": steps - 1}  # start settled (clearest view)
+
+    @torch.no_grad()
+    def render_fn(camera_state, arg2):
+        width, height = _wh(arg2)
+        c2w = torch.as_tensor(camera_state.c2w, dtype=torch.float32, device=device)
+        K = torch.as_tensor(camera_state.get_K((width, height)), dtype=torch.float32, device=device)
+        viewmat = torch.linalg.inv(c2w)
+        splats = assemble_frame(per_obj, positions[state["frame"]], quats[state["frame"]], device=device)
+        colors, _, _ = rasterize_splats(splats, viewmat[None], K[None], width, height, sh_degree)
+        return colors[0, ..., :3].clamp(0, 1).cpu().numpy()
+
+    server = viser.ViserServer(port=port, verbose=False)
+    rest = assemble_frame(per_obj, positions[-1], quats[-1], device=device)  # settled
+    _frame_scene_camera(server, rest["means"])
+    with server.gui.add_folder("Physics"):
+        gui_frame = server.gui.add_slider("Frame", min=0, max=steps - 1, step=1, initial_value=steps - 1)
+        gui_play = server.gui.add_checkbox("Play", initial_value=False)
+
+    viewer = nerfview.Viewer(server=server, render_fn=render_fn, mode="rendering")
+
+    @gui_frame.on_update
+    def _(_=None) -> None:
+        state["frame"] = int(gui_frame.value)
+        if hasattr(viewer, "rerender"):
+            viewer.rerender(None)
+
+    print(f"[view-sim] serving at http://localhost:{port}  (tunnel: ssh -L {port}:localhost:{port} <server>)")
+    print("[view-sim] drag to orbit; Frame slider / Play scrubs the physics. Ctrl+C to stop.")
+    while True:
+        if gui_play.value:
+            state["frame"] = (state["frame"] + 1) % steps
+            gui_frame.value = state["frame"]  # updates slider + triggers rerender
+            time.sleep(1.0 / 60.0)
+        else:
+            time.sleep(0.05)
+
+
+def view_env(
+    checkpoint: str | Path,
+    data_dir: str | Path,
+    port: int = 8080,
+    device: str = "cuda",
+    *,
+    scale: float | None = None,
+    backend: str = "cpu",
+    max_object_size: float = 0.45,
+) -> None:
+    """Interactive viewer of the metric, gravity-aligned GS3DSimScene: the real
+    captured scene rendered photorealistically, with live Genesis physics you can
+    play/pause. This is the training env (minus your robot) — orbit it to verify
+    sizing/orientation/appearance are correct."""
+    import nerfview
+    import numpy as np
+    import viser
+
+    from .export.env import GS3DSimScene
+
+    env = GS3DSimScene(checkpoint, data_dir, scale=scale, backend=backend,
+                       max_object_size=max_object_size, device=device)
+    env.build()  # no robot; user's robot would be added before build in code
+
+    @torch.no_grad()
+    def render_fn(camera_state, arg2):
+        width, height = _wh(arg2)
+        c2w = torch.as_tensor(camera_state.c2w, dtype=torch.float32, device=device)
+        K = torch.as_tensor(camera_state.get_K((width, height)), dtype=torch.float32, device=device)
+        img = env.render(c2w, K, width, height)
+        return img.astype(np.float32) / 255.0
+
+    server = viser.ViserServer(port=port, verbose=False)
+
+    # Frame on the table/objects (z-up metric world).
+    if env.objects:
+        center = np.mean([o["rest_pos"] for o in env.objects], axis=0)
+    else:
+        center = env.bg["means"].mean(0).cpu().numpy()
+    eye = center + np.array([0.6, 0.6, 0.5])
+
+    @server.on_client_connect
+    def _(client) -> None:
+        client.camera.up_direction = np.array([0.0, 0.0, 1.0])
+        client.camera.position = eye.astype(float)
+        client.camera.look_at = center.astype(float)
+
+    with server.gui.add_folder("Sim"):
+        gui_play = server.gui.add_checkbox("Play physics", initial_value=False)
+
+    viewer = nerfview.Viewer(server=server, render_fn=render_fn, mode="rendering")
+
+    print(f"[view-env] serving at http://localhost:{port}  (tunnel: ssh -L {port}:localhost:{port} <server>)")
+    print("[view-env] orbit the scene; 'Play physics' steps Genesis. Ctrl+C to stop.")
+    while True:
+        if gui_play.value:
+            env.step()
+            if hasattr(viewer, "rerender"):
+                viewer.rerender(None)
+            time.sleep(1.0 / 60.0)
+        else:
+            time.sleep(0.05)
