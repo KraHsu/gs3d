@@ -36,6 +36,16 @@ recon = [
     "matplotlib",  # nerfview render panel (undeclared by nerfview)
     "splines",     # nerfview camera paths (undeclared by nerfview)
 ]
+# Scene -> physics-sim export (segmented checkpoint -> per-object URDFs). Light,
+# lock-stable deps only. The physics engine itself (genesis-world) is NOT pinned
+# here: it pulls a large, version-strict tree (vtk, pymeshlab, numba, gs-madrona)
+# that would destabilise the universal lock, and is only needed on the machine
+# that runs the simulation. Install it there directly:  uv pip install genesis-world
+# (the exported URDFs are standard, so they also load in PyBullet / Isaac.)
+sim = [
+    "trimesh>=4.0",      # convex hull, inertia, OBJ/PLY I/O
+    "coacd>=1.0; sys_platform == 'linux'",  # collision-aware convex decomposition (optional)
+]
 
 [project.scripts]
 gs3d = "gs3d.cli:main"

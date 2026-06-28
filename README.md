@@ -129,6 +129,49 @@ and instance ids come from the *same* checkpoint tensors, so they always align
 used for segmentation). It accepts a `.pth` checkpoint or a reference `.ply`
 (RGB only — a PLY has no instance ids).
 
+### Export to a physics simulator (segmentation → Genesis)
+
+Turn a **segmented** reference-3DGS checkpoint (one carrying per-Gaussian instance
+ids, `gaussians._cluster_indices`) into per-object collision assets you can drop
+into a physics engine. The pipeline is three inspectable stages
+(`src/gs3d/recon/export/`): split by instance → convex-hull mesh + collision
+proxy → URDF + `scene.json`. See `docs/3dgs-to-physics-sim-survey.md` for the
+method landscape and why this is the pragmatic "mesh handles physics" route.
+
+```bash
+uv sync --extra recon --extra sim        # adds trimesh + coacd (light, lock-stable)
+
+# 1. inspect the instance split first (per-cluster point PLYs + manifest.json)
+uv run gs3d export-clusters <checkpoint.pth> -o export/<scene>
+
+# 2. full export: split → mesh → URDF → scene.json (start with a few objects)
+uv run gs3d export-sim <checkpoint.pth> -o export/<scene> --ids 26 4
+#   --scale <colmap-units-per-metre>   metric coords (mass/friction depend on it)
+#   --density <kg/m^3>                 per-object density (default 300)
+#   --max-objects N / --include-static / --no-coacd
+
+# 3. simulate: load the URDFs in Genesis and drop them onto a ground plane
+uv pip install genesis-world             # heavy, version-strict — not in the lock
+uv run gs3d sim-genesis export/<scene> --backend cpu --record drop.mp4
+#   --layout layout   reproduce captured world poses (else 'drop' = grid above plane)
+```
+
+`export-clusters` filters floater clusters (`--min-points`) and flags the
+table/background as static. `export-sim` writes a self-contained `urdf/` (meshes
+copied alongside) plus `scene.json` with each object's world pose, mass and
+static flag. The URDFs are standard, so the same scene also loads in
+**PyBullet / Isaac**; `sim-genesis` is just the reference loader.
+
+> **Scale matters.** 3DGS geometry is scale-free. Without `--scale`, coordinates
+> stay in COLMAP units and masses are not real-world (physics still *runs*, sizes
+> are just arbitrary). Recover the factor from the D435i depth
+> (`depth_init.estimate_colmap_scale`) for metric assets.
+>
+> **Still approximate.** v1 collision is a convex hull (CoACD splits non-convex
+> objects when it helps); the *visual* mesh is that hull too. A photorealistic
+> surface (2DGS/PGSR) and VLM-estimated physical parameters are the documented
+> next upgrades — see the survey's §4 and Appendix B.
+
 ### Blackwell / RTX 50-series GPUs (sm_120)
 
 The recon extra pins **torch cu128**, which ships sm_120 kernels (it still runs

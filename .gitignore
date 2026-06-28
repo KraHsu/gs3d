@@ -33,8 +33,9 @@ venv/
 # Logs
 *.log
 
-# OS / editor
+# OS / editor / tools
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+.serena/

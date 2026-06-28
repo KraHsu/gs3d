@@ -65,6 +65,18 @@ wheels = [
 ]
 
 [[package]]
+name = "coacd"
+version = "1.0.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/a7/06f63baa29198f681ba60848e3271cc625eddd61cd4e59071f56ffce9362/coacd-1.0.11-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e376fadb22790444c7253f0cee9104a1af01ec965488c1318e84e3b2dbf1e2a3", size = 2573832, upload-time = "2026-05-04T19:23:38.008Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/b4/057c78f7b16b87871cfcecc6febe70522e77a2a33f8788960377152c224d/coacd-1.0.11-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a60f700a52e5b40462e508c14bb756cd63ce7e6a95ff72ae0b1592be1dbb0106", size = 2640170, upload-time = "2026-05-04T19:23:39.322Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -220,9 +232,14 @@ recon = [
     { name = "viser", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "wheel", marker = "sys_platform == 'linux'" },
 ]
+sim = [
+    { name = "coacd", marker = "sys_platform == 'linux'" },
+    { name = "trimesh", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "coacd", marker = "sys_platform == 'linux' and extra == 'sim'", specifier = ">=1.0" },
     { name = "gsplat", marker = "sys_platform == 'linux' and extra == 'recon'", specifier = ">=1.4.0" },
     { name = "imageio", extras = ["ffmpeg"], marker = "extra == 'recon'", specifier = ">=2.31" },
     { name = "matplotlib", marker = "extra == 'recon'" },
@@ -240,10 +257,11 @@ requires-dist = [
     { name = "splines", marker = "extra == 'recon'" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'recon'", specifier = "==2.8.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", marker = "extra == 'recon'", specifier = ">=4.66" },
+    { name = "trimesh", marker = "extra == 'sim'", specifier = ">=4.0" },
     { name = "viser", marker = "extra == 'recon'", specifier = ">=0.2" },
     { name = "wheel", marker = "sys_platform == 'linux' and extra == 'recon'" },
 ]
-provides-extras = ["capture", "recon"]
+provides-extras = ["capture", "recon", "sim"]
 
 [[package]]
 name = "gsplat"

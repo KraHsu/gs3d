@@ -58,6 +58,51 @@ def main(argv: list[str] | None = None) -> int:
     p_vs.add_argument("checkpoint", help="reference-3DGS .pth (with _cluster_indices) or .ply")
     p_vs.add_argument("--port", type=int, default=8080)
 
+    p_ec = sub.add_parser(
+        "export-clusters",
+        help="Split a segmented reference-3DGS checkpoint into per-instance point "
+        "subsets + manifest (first stage of scene->sim export)",
+    )
+    p_ec.add_argument("checkpoint", help="reference-3DGS .pth with _cluster_indices")
+    p_ec.add_argument("-o", "--out", required=True, help="Output directory for clusters/ + manifest.json")
+    p_ec.add_argument("--scale", type=float, default=1.0,
+                      help="COLMAP units per metre (divide coords to get metres); 1.0 = non-metric")
+    p_ec.add_argument("--min-points", type=int, default=200,
+                      help="Drop clusters with fewer Gaussians as floater noise")
+    p_ec.add_argument("--min-opacity", type=float, default=0.0,
+                      help="Drop Gaussians below this (sigmoid) opacity before splitting")
+    p_ec.add_argument("--background-id", type=int, default=0,
+                      help="Instance id to flag as static (table/floor)")
+
+    p_es = sub.add_parser(
+        "export-sim",
+        help="Full scene->sim export: split checkpoint -> per-object meshes -> URDFs "
+        "+ scene.json (loadable in Genesis/PyBullet)",
+    )
+    p_es.add_argument("checkpoint", help="reference-3DGS .pth with _cluster_indices")
+    p_es.add_argument("-o", "--out", required=True, help="Output directory")
+    p_es.add_argument("--ids", type=int, nargs="+", default=None,
+                      help="Instance ids to export (default: all kept non-static objects)")
+    p_es.add_argument("--max-objects", type=int, default=None, help="Cap number of objects")
+    p_es.add_argument("--scale", type=float, default=1.0,
+                      help="COLMAP units per metre (1.0 = non-metric)")
+    p_es.add_argument("--density", type=float, default=300.0, help="Object density kg/m^3")
+    p_es.add_argument("--min-points", type=int, default=200, help="Floater filter threshold")
+    p_es.add_argument("--no-coacd", action="store_true", help="Force single convex-hull collision")
+    p_es.add_argument("--include-static", action="store_true", help="Also mesh table/background")
+
+    p_sg = sub.add_parser(
+        "sim-genesis",
+        help="Load an exported scene (scene.json + URDFs) into Genesis and simulate",
+    )
+    p_sg.add_argument("export_dir", help="Directory produced by export-sim (has scene.json)")
+    p_sg.add_argument("--layout", choices=["drop", "layout"], default="drop",
+                      help="'drop' = grid above plane; 'layout' = captured world poses")
+    p_sg.add_argument("--steps", type=int, default=240, help="Simulation steps")
+    p_sg.add_argument("--viewer", action="store_true", help="Open the interactive viewer")
+    p_sg.add_argument("--record", default=None, help="Write an mp4 of a fixed camera")
+    p_sg.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -96,6 +141,42 @@ def main(argv: list[str] | None = None) -> int:
         from .recon.viewer import view_seg
 
         view_seg(args.checkpoint, port=args.port)
+    elif args.cmd == "export-clusters":
+        from .recon.export.clusters import export_clusters
+
+        export_clusters(
+            args.checkpoint,
+            args.out,
+            scale=args.scale,
+            min_points=args.min_points,
+            min_opacity=args.min_opacity,
+            background_id=args.background_id,
+        )
+    elif args.cmd == "export-sim":
+        from .recon.export.pipeline import export_sim
+
+        export_sim(
+            args.checkpoint,
+            args.out,
+            ids=args.ids,
+            max_objects=args.max_objects,
+            scale=args.scale,
+            density=args.density,
+            min_points=args.min_points,
+            use_coacd=not args.no_coacd,
+            include_static=args.include_static,
+        )
+    elif args.cmd == "sim-genesis":
+        from .recon.export.genesis_scene import load_scene
+
+        load_scene(
+            args.export_dir,
+            layout=args.layout,
+            steps=args.steps,
+            show_viewer=args.viewer,
+            record=args.record,
+            backend=args.backend,
+        )
     return 0
 
 
