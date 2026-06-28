@@ -74,6 +74,7 @@ class GS3DSimScene:
         data_dir: str | Path,
         *,
         scale: float | None = None,
+        object_ids: list[int] | None = None,
         max_object_size: float = 0.45,
         min_points: int = 200,
         density: float = 300.0,
@@ -117,7 +118,10 @@ class GS3DSimScene:
         kept = [c for c, n in cnt.items() if n >= min_points]
         extents = {c: float(np.linalg.norm(mn[ids == c].max(0) - mn[ids == c].min(0))) for c in kept}
         bg_id = max(extents, key=lambda c: extents[c])  # biggest = room/background
-        obj_ids = [c for c in kept if c != bg_id and extents[c] <= max_object_size]
+        if object_ids is not None:
+            obj_ids = [int(c) for c in object_ids if c in cnt]
+        else:
+            obj_ids = [c for c in kept if c != bg_id and extents[c] <= max_object_size]
         obj_centroid = np.median(mn[np.isin(ids, obj_ids)], axis=0) if obj_ids else mn.mean(0)
 
         # 2. gravity / table alignment ---------------------------------------
@@ -138,12 +142,24 @@ class GS3DSimScene:
         # table (aligned base z ~ 0). Drops shelf/wall items and floating shards
         # that would otherwise fall through or drop from mid-air.
         mn_aligned = (T[:3, :3] @ mn.T).T + T[:3, 3]
-        on_table = []
-        for c in obj_ids:
-            base_z = float(np.percentile(mn_aligned[ids == c][:, 2], 2))
-            if -0.25 <= base_z <= 0.25:  # near the table (allow segmentation bleed)
-                on_table.append(c)
-        obj_ids = on_table
+        if object_ids is None:  # auto: keep compact clusters resting on the table
+            on_table = []
+            for c in obj_ids:
+                base_z = float(np.percentile(mn_aligned[ids == c][:, 2], 2))
+                if -0.25 <= base_z <= 0.25:  # near the table (allow segmentation bleed)
+                    on_table.append(c)
+            obj_ids = on_table
+
+        # Pin z=0 to the surface the selected objects actually rest on (their base
+        # height), not just the RANSAC plane — which may latch onto the floor and
+        # leave objects floating/sunk. This makes the Genesis ground plane coincide
+        # with the real table under the objects.
+        if obj_ids:
+            obj_base = float(np.percentile(mn_aligned[np.isin(ids, obj_ids)][:, 2], 2))
+            T[2, 3] -= obj_base
+            self.T = T
+            t = torch.tensor(T[:3, 3], dtype=torch.float32, device=device)
+            mn_aligned[:, 2] -= obj_base
 
         # 4. split + transform Gaussians into aligned metric frame ------------
         log_inv_s = math.log(1.0 / self.scale)
@@ -284,6 +300,68 @@ class GS3DSimScene:
             "scales": torch.cat(scales), "opacities": torch.cat(opac),
             "sh0": torch.cat(sh0), "shN": torch.cat(shN),
         }
+
+    def _demo_camera(self, width, height, fov_deg=50.0):
+        """A fixed 3/4 view framing the dynamic objects (aligned z-up world)."""
+        from .sim_render import _look_at
+
+        if self.objects:
+            center = np.mean([o["rest_pos"] for o in self.objects], axis=0).astype(np.float32)
+        else:
+            center = self.bg["means"].mean(0).cpu().numpy()
+        center[2] = 0.02
+        eye = center + np.array([0.28, 0.28, 0.62], dtype=np.float32)  # mostly overhead
+        c2w = _look_at(eye, center, np.array([0.0, 0.0, 1.0]))
+        f = 0.5 * width / math.tan(0.5 * math.radians(fov_deg))
+        K = np.array([[f, 0, width / 2], [0, f, height / 2], [0, 0, 1]], dtype=np.float32)
+        return c2w, K
+
+    def perturb(self, *, lift: float = 0.12, speed: float = 0.4) -> None:
+        """Shove the objects (lift + horizontal velocity) so they fall, collide and
+        tumble — a robot-free way to show physical interaction with the real objects."""
+        if not self._built:
+            self.build()
+        n = max(1, len(self._ents))
+        for i, ent in enumerate(self._ents):
+            ang = 2 * math.pi * i / n
+            try:
+                p = np.asarray(ent.get_pos().cpu(), dtype=np.float32)
+                ent.set_pos(np.array([p[0], p[1], p[2] + lift], dtype=np.float32),
+                            relative=False, zero_velocity=True)
+                ent.set_dofs_velocity(
+                    np.array([speed * math.cos(ang), speed * math.sin(ang), 0, 0, 0, 0],
+                             dtype=np.float32)
+                )
+            except Exception as e:
+                print(f"[demo] perturb fallback (lift only) for object {i}: {e}")
+
+    def demo(
+        self,
+        out_mp4: str | Path,
+        *,
+        steps: int = 300,
+        fps: int = 60,
+        width: int = 960,
+        height: int = 720,
+        settle_frames: int = 20,
+        lift: float = 0.12,
+        speed: float = 0.4,
+    ) -> None:
+        """Record a photoreal object-interaction clip: settle -> shove -> tumble."""
+        import imageio.v2 as imageio
+
+        if not self._built:
+            self.build()
+        c2w, K = self._demo_camera(width, height)
+        writer = imageio.get_writer(str(out_mp4), fps=fps, macro_block_size=1)
+        for _ in range(settle_frames):       # a beat at rest before the shove
+            writer.append_data(self.render(c2w, K, width, height))
+        self.perturb(lift=lift, speed=speed)
+        for _ in range(steps):
+            self.step()
+            writer.append_data(self.render(c2w, K, width, height))
+        writer.close()
+        print(f"[demo] wrote {out_mp4} ({settle_frames + steps} frames @ {fps} fps)")
 
     @torch.no_grad()
     def render(self, c2w, K, width: int, height: int) -> np.ndarray:

@@ -155,6 +155,23 @@ def main(argv: list[str] | None = None) -> int:
     p_ve.add_argument("--port", type=int, default=8080)
     p_ve.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
 
+    p_dm = sub.add_parser(
+        "sim-demo",
+        help="Record a photoreal object-interaction clip from the sim scene "
+        "(objects are shoved and tumble/collide; robot-free).",
+    )
+    p_dm.add_argument("checkpoint", help="segmented reference-3DGS .pth with _cluster_indices")
+    p_dm.add_argument("--data-dir", required=True, help="Capture dir (output/cameras.json + table_new/depth)")
+    p_dm.add_argument("--record", required=True, help="Output mp4 path")
+    p_dm.add_argument("--scale", type=float, default=None, help="COLMAP units/m (default: auto)")
+    p_dm.add_argument("--object-ids", type=int, nargs="+", default=None,
+                      help="Cluster ids to make manipulable (default: auto-detect on-table objects)")
+    p_dm.add_argument("--max-object-size", type=float, default=0.45)
+    p_dm.add_argument("--steps", type=int, default=300)
+    p_dm.add_argument("--speed", type=float, default=0.4, help="Shove speed (m/s)")
+    p_dm.add_argument("--lift", type=float, default=0.12, help="Lift before shove (m)")
+    p_dm.add_argument("--backend", choices=["gpu", "cpu"], default="cpu")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "capture":
@@ -270,6 +287,15 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             backend=args.backend,
         )
+    elif args.cmd == "sim-demo":
+        from .recon.export.env import GS3DSimScene
+
+        env = GS3DSimScene(
+            args.checkpoint, args.data_dir, scale=args.scale, object_ids=args.object_ids,
+            max_object_size=args.max_object_size, backend=args.backend,
+        )
+        env.build()
+        env.demo(args.record, steps=args.steps, speed=args.speed, lift=args.lift)
     return 0
 
 
